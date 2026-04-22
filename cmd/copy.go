@@ -402,7 +402,7 @@ func runCopy(_ *cobra.Command, args []string) error {
 	if destNoReuse {
 		img = image.WithoutMountReuse(img)
 	}
-	if showProgress && dstCh != nil {
+	if dstCh != nil {
 		writeOpts = append(writeOpts, remote.WithProgress(dstCh))
 	}
 
