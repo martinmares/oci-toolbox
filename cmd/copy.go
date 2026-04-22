@@ -417,15 +417,10 @@ func runCopy(_ *cobra.Command, args []string) error {
 	}
 
 	if err := remote.Write(dstParsed, img, writeOpts...); err != nil {
-		closeProg(nil, dstCh)
 		if jsonEmitter != nil {
 			jsonEmitter.Error("pushing image: " + err.Error())
 		}
 		return fmt.Errorf("pushing image: %w", err)
-	}
-
-	if dstCh != nil {
-		close(dstCh)
 	}
 
 	if ui != nil {
