@@ -18,7 +18,8 @@ var rootCmd = &cobra.Command{
 	Long: `oci-patch copies OCI images between registries and applies recipes
 to modify the image in-flight — without requiring a Docker daemon.`,
 	// --version flag (skopeo-compatible: prints "oci-patch version X.Y.Z")
-	Version: version,
+	Version:      version,
+	SilenceUsage: true,
 }
 
 func init() {
