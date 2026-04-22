@@ -1,0 +1,32 @@
+name: "shadow /app onto a new base"
+description: "Take /app from the source image, rebuild on a new base, and keep /app OpenShift-safe"
+
+sources:
+  - id: src
+    ref: "{{.SourceImage}}"
+
+  - id: base
+    ref: docker://registry.example.com/your-runtime-base:latest
+
+steps:
+  - action: use-base
+    from: base
+
+  - action: shadow
+    from: src
+    path: /app
+    extract-to: /app
+    output: /app/app.self
+
+  - action: fix-permissions
+    path: /app
+    owner: "1001:0"
+    mode: g=u
+    setgid-dirs: true
+
+  - action: set-env
+    key: HOME
+    value: /app
+
+  - action: set-workdir
+    value: /app

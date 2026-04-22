@@ -1,0 +1,20 @@
+name: "shadow /app folder"
+description: "Replace /app with encrypted self-extracting bootstrap and make it OpenShift-safe"
+
+steps:
+  - action: shadow
+    path: /app
+    extract-to: /app
+    output: /app/app.self
+
+  - action: remove-dir
+    dst: /usr/share/java/maven-3
+
+  - action: remove-file
+    dst: /usr/bin/docker
+
+  - action: fix-permissions
+    path: /app
+    owner: "1001:0"
+    mode: g=u
+    setgid-dirs: true

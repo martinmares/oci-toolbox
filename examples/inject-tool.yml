@@ -1,0 +1,18 @@
+name: "inject-encjson"
+description: "Injects the encjson utility into the image"
+
+steps:
+  - action: add-file
+    src: ./utils/encjson
+    dst: /usr/local/bin/encjson
+    mode: "0755"
+    condition:
+      if-not-exists: /usr/local/bin/encjson
+
+  - action: set-label
+    key: "org.datalite.patched-by"
+    value: "oci-patch"
+
+  - action: set-label
+    key: "org.datalite.patch-recipe"
+    value: "inject-encjson"

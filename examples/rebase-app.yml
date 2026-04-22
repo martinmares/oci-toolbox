@@ -1,0 +1,41 @@
+name: "rebase-app-on-alpine"
+description: "Extracts app.jar from source image and rebuilds on clean Alpine base"
+
+registries:
+  - url: docker.io
+    # anonymous access
+
+sources:
+  - id: original
+    ref: "{{.SourceImage}}"
+  - id: alpine-base
+    ref: docker://docker.io/library/alpine:3.21
+
+steps:
+  - action: use-base
+    from: alpine-base
+
+  - action: copy-file-from
+    from: original
+    src: /app/dist/app.jar
+    dst: /app/dist/app.jar
+    mode: "0644"
+    owner: "1001:1001"
+
+  - action: unzip-to
+    src: /app/dist/app.jar
+    dst: /app/dist/extracted/
+    owner: "1001:1001"
+
+  - action: set-user
+    value: "1001:1001"
+
+  - action: set-workdir
+    value: /app
+
+  - action: set-entrypoint
+    value_list: ["java", "-jar", "/app/dist/app.jar"]
+
+  - action: set-label
+    key: "org.datalite.base"
+    value: "alpine:3.21"
