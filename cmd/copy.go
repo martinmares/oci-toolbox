@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -20,15 +21,16 @@ import (
 )
 
 var (
-	recipePaths  []string
-	srcCreds     string
-	destCreds    string
-	debugMode    bool
-	destNoReuse  bool
-	showProgress bool
-	reducelayers bool
-	srcInsecure  bool
-	destInsecure bool
+	recipePaths      []string
+	srcCreds         string
+	destCreds        string
+	debugMode        bool
+	destNoReuse      bool
+	showProgress     bool
+	showProgressJSON bool
+	reducelayers     bool
+	srcInsecure      bool
+	destInsecure     bool
 )
 
 var copyCmd = &cobra.Command{
@@ -48,6 +50,7 @@ func init() {
 	copyCmd.Flags().BoolVar(&debugMode, "debug", false, "enable verbose debug output")
 	copyCmd.Flags().BoolVar(&destNoReuse, "dest-no-reuse", false, "disable blob reuse at destination (fallback for some registries)")
 	copyCmd.Flags().BoolVar(&showProgress, "progress", false, "show progress bars for pull and push")
+	copyCmd.Flags().BoolVar(&showProgressJSON, "progress-json", false, "emit machine-readable progress events as JSONL")
 	copyCmd.Flags().BoolVar(&reducelayers, "reduce", false, "squash all layers into one before pushing (fewer layers, size may increase)")
 	copyCmd.Flags().BoolVar(&srcInsecure, "src-insecure", false, "skip TLS certificate verification for source registry")
 	copyCmd.Flags().BoolVar(&destInsecure, "dest-insecure", false, "skip TLS certificate verification for destination registry")
@@ -77,6 +80,10 @@ func runCopy(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("source and destination are required (provide as positional arguments or --from/--to)")
 	}
 
+	if showProgress && showProgressJSON {
+		return fmt.Errorf("--progress and --progress-json cannot be used together")
+	}
+
 	if debugMode {
 		logging.Setup(slog.LevelDebug)
 	} else {
@@ -95,6 +102,7 @@ func runCopy(_ *cobra.Command, args []string) error {
 	// --- setup progress UI ---
 	isFileDst := strings.HasPrefix(dst, "file://")
 	var ui *progress.UI
+	var jsonEmitter *progress.JSONEmitter
 	var srcCh, dstCh chan<- v1.Update
 	if showProgress {
 		srcLabel := shortRef(src)
@@ -109,12 +117,24 @@ func runCopy(_ *cobra.Command, args []string) error {
 		srcCh = ui.SrcChannel()
 		dstCh = ui.DstChannel()
 		srcOpts = append(srcOpts, remote.WithProgress(srcCh))
+	} else if showProgressJSON {
+		jsonEmitter = progress.NewJSONEmitter(os.Stdout)
+		srcCh = jsonEmitter.Channel("pull")
+		if isFileDst {
+			dstCh = jsonEmitter.Channel("save")
+		} else {
+			dstCh = jsonEmitter.Channel("push")
+		}
+		srcOpts = append(srcOpts, remote.WithProgress(srcCh))
 	}
 
 	// --- pull source image ---
 	srcParsed, err := name.ParseReference(stripScheme(src))
 	if err != nil {
 		closeProg(srcCh, dstCh)
+		if jsonEmitter != nil {
+			jsonEmitter.Error("invalid source reference: " + err.Error())
+		}
 		return fmt.Errorf("invalid source reference: %w", err)
 	}
 
@@ -124,18 +144,27 @@ func runCopy(_ *cobra.Command, args []string) error {
 	if ui != nil {
 		ui.SetStatus("phase: pulling source image")
 	}
+	if jsonEmitter != nil {
+		jsonEmitter.Phase("pull", srcParsed.String())
+	}
 
 	img, err := remote.Image(srcParsed, srcOpts...)
 	if err != nil {
 		closeProg(srcCh, dstCh)
+		if jsonEmitter != nil {
+			jsonEmitter.Error("pulling source image: " + err.Error())
+		}
 		return fmt.Errorf("pulling source image: %w", err)
 	}
 
 	// go-containerregistry pull is lazy — remote.WithProgress only fires during push (write.go).
 	// For pull progress we manually stream all layers and report bytes to srcCh ourselves.
-	if showProgress || isFileDst {
+	if showProgress || showProgressJSON || isFileDst {
 		if err := eagerPull(img, srcCh); err != nil {
 			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("pulling layers: " + err.Error())
+			}
 			return fmt.Errorf("pulling layers: %w", err)
 		}
 	}
@@ -156,6 +185,9 @@ func runCopy(_ *cobra.Command, args []string) error {
 		ctx, err := recipe.ResolveContextSources(r, src, img)
 		if err != nil {
 			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("resolving recipe sources: " + err.Error())
+			}
 			return fmt.Errorf("resolving recipe sources: %w", err)
 		}
 		for _, step := range r.Steps {
@@ -177,14 +209,27 @@ func runCopy(_ *cobra.Command, args []string) error {
 			}
 			ui.SetStatus("phase: applying recipe " + name)
 		}
+		if jsonEmitter != nil {
+			name := r.Name
+			if name == "" {
+				name = path
+			}
+			jsonEmitter.Phase("recipe", name)
+		}
 		report := func(text string) {
 			if ui != nil {
 				ui.SetStatus("phase: " + text)
+			}
+			if jsonEmitter != nil {
+				jsonEmitter.Status(text)
 			}
 		}
 		img, err = recipe.ApplyWithReporter(img, r, ctx, report)
 		if err != nil {
 			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("applying recipe failed: " + err.Error())
+			}
 			return fmt.Errorf("applying recipe %q: %w", path, err)
 		}
 	}
@@ -203,6 +248,9 @@ func runCopy(_ *cobra.Command, args []string) error {
 		if ui != nil {
 			ui.SetStatus("phase: squashing layers")
 		}
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("squash", "layers")
+		}
 		if reduceBase != nil {
 			img, err = image.ReduceToBase(reduceBase, img)
 		} else {
@@ -210,6 +258,9 @@ func runCopy(_ *cobra.Command, args []string) error {
 		}
 		if err != nil {
 			closeProg(nil, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("squashing layers: " + err.Error())
+			}
 			return fmt.Errorf("squashing layers: %w", err)
 		}
 	}
@@ -229,6 +280,9 @@ func runCopy(_ *cobra.Command, args []string) error {
 		if ui != nil {
 			ui.SetStatus("phase: writing tarball")
 		}
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("save", filePath)
+		}
 		tarOpts := []tarball.WriteOption{}
 		if dstCh != nil {
 			tarOpts = append(tarOpts, tarball.WithProgress(dstCh))
@@ -245,12 +299,18 @@ func runCopy(_ *cobra.Command, args []string) error {
 		} else {
 			slog.Info("saved image tarball", "source", srcParsed.String(), "path", filePath)
 		}
+		if jsonEmitter != nil {
+			jsonEmitter.Done("success", "saved image tarball")
+		}
 		return nil
 	}
 
 	dstParsed, err := name.ParseReference(stripScheme(dst))
 	if err != nil {
 		closeProg(nil, dstCh)
+		if jsonEmitter != nil {
+			jsonEmitter.Error("invalid destination reference: " + err.Error())
+		}
 		return fmt.Errorf("invalid destination reference: %w", err)
 	}
 
@@ -268,9 +328,15 @@ func runCopy(_ *cobra.Command, args []string) error {
 	if ui != nil {
 		ui.SetStatus("phase: pushing destination image")
 	}
+	if jsonEmitter != nil {
+		jsonEmitter.Phase("push", dstParsed.String())
+	}
 
 	if err := remote.Write(dstParsed, img, writeOpts...); err != nil {
 		closeProg(nil, dstCh)
+		if jsonEmitter != nil {
+			jsonEmitter.Error("pushing image: " + err.Error())
+		}
 		return fmt.Errorf("pushing image: %w", err)
 	}
 
@@ -282,6 +348,9 @@ func runCopy(_ *cobra.Command, args []string) error {
 		ui.Wait()
 	} else {
 		slog.Info("copied image", "source", srcParsed.String(), "destination", dstParsed.String())
+	}
+	if jsonEmitter != nil {
+		jsonEmitter.Done("success", "copied image")
 	}
 
 	return nil

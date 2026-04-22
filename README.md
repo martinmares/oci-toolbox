@@ -139,6 +139,8 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 | `--debug` | Enable verbose output |
 | `--dest-no-reuse` | Disable cross-repository blob mount/reuse at destination (retry fallback) |
 | `--reduce` | Materialize the final filesystem into a single minimal layer |
+| `--progress` | Render terminal progress bars |
+| `--progress-json` | Emit machine-readable progress events as JSONL |
 
 **Examples:**
 
@@ -177,6 +179,10 @@ oci-patch copy \
 # Retry fallback with --dest-no-reuse
 oci-patch copy --debug --dest-no-reuse \
   --src-creds user:pass --dest-creds user:pass \
+  docker://src/app:tag docker://dst/app:tag
+
+# Machine-readable progress for integrations
+oci-patch copy --progress-json \
   docker://src/app:tag docker://dst/app:tag
 ```
 

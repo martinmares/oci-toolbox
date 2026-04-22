@@ -139,6 +139,8 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 | `--debug` | Zapne podrobný výstup |
 | `--dest-no-reuse` | Zakáže cross-repository blob mount/reuse v cíli (fallback při problémech) |
 | `--reduce` | Materializuje finální filesystem do jediné minimální vrstvy |
+| `--progress` | Vykreslí terminálové progress bary |
+| `--progress-json` | Emituje machine-readable progress eventy jako JSONL |
 
 **Příklady:**
 
@@ -177,6 +179,10 @@ oci-patch copy \
 # Fallback s --dest-no-reuse při chybě blob reuse
 oci-patch copy --debug --dest-no-reuse \
   --src-creds user:pass --dest-creds user:pass \
+  docker://src/app:tag docker://dst/app:tag
+
+# Machine-readable progress pro integrace
+oci-patch copy --progress-json \
   docker://src/app:tag docker://dst/app:tag
 ```
 
