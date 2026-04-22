@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/spf13/cobra"
@@ -100,61 +101,108 @@ func runCopy(_ *cobra.Command, args []string) error {
 	}
 
 	// --- setup progress UI ---
+	srcIsDaemon := isDaemonRef(src)
+	dstIsDaemon := isDaemonRef(dst)
 	isFileDst := strings.HasPrefix(dst, "file://")
 	var ui *progress.UI
 	var jsonEmitter *progress.JSONEmitter
 	var srcCh, dstCh chan<- v1.Update
 	if showProgress {
 		srcLabel := shortRef(src)
-		if isFileDst {
+		switch {
+		case isFileDst:
 			filePath := strings.TrimPrefix(dst, "file://")
 			ui = progress.New("pull: "+srcLabel, "save: "+filePath)
-		} else {
+		case dstIsDaemon:
+			ui = progress.New("pull: "+srcLabel, "load: "+shortRef(dst))
+		default:
 			dstLabel := shortRef(dst)
 			ui = progress.New("pull: "+srcLabel, "push: "+dstLabel)
 		}
 		ui.Run()
 		srcCh = ui.SrcChannel()
-		dstCh = ui.DstChannel()
-		srcOpts = append(srcOpts, remote.WithProgress(srcCh))
+		if !dstIsDaemon {
+			dstCh = ui.DstChannel()
+		}
+		if !srcIsDaemon {
+			srcOpts = append(srcOpts, remote.WithProgress(srcCh))
+		}
 	} else if showProgressJSON {
 		jsonEmitter = progress.NewJSONEmitter(os.Stdout)
 		srcCh = jsonEmitter.Channel("pull")
-		if isFileDst {
+		switch {
+		case isFileDst:
 			dstCh = jsonEmitter.Channel("save")
-		} else {
+		case dstIsDaemon:
+			// daemon writes currently emit phase/done only
+		default:
 			dstCh = jsonEmitter.Channel("push")
 		}
-		srcOpts = append(srcOpts, remote.WithProgress(srcCh))
-	}
-
-	// --- pull source image ---
-	srcParsed, err := name.ParseReference(stripScheme(src))
-	if err != nil {
-		closeProg(srcCh, dstCh)
-		if jsonEmitter != nil {
-			jsonEmitter.Error("invalid source reference: " + err.Error())
+		if !srcIsDaemon {
+			srcOpts = append(srcOpts, remote.WithProgress(srcCh))
 		}
-		return fmt.Errorf("invalid source reference: %w", err)
 	}
 
-	if debugMode {
-		slog.Debug("pulling source image", "ref", srcParsed.String())
-	}
-	if ui != nil {
-		ui.SetStatus("phase: pulling source image")
-	}
-	if jsonEmitter != nil {
-		jsonEmitter.Phase("pull", srcParsed.String())
-	}
-
-	img, err := remote.Image(srcParsed, srcOpts...)
-	if err != nil {
-		closeProg(srcCh, dstCh)
-		if jsonEmitter != nil {
-			jsonEmitter.Error("pulling source image: " + err.Error())
+	// --- load source image ---
+	var (
+		img      v1.Image
+		srcLabel string
+		err      error
+	)
+	if srcIsDaemon {
+		srcTag, err := parseDaemonTag(src)
+		if err != nil {
+			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("invalid daemon source reference: " + err.Error())
+			}
+			return fmt.Errorf("invalid daemon source reference: %w", err)
 		}
-		return fmt.Errorf("pulling source image: %w", err)
+		srcLabel = srcTag.String()
+		if debugMode {
+			slog.Debug("loading source image from daemon", "ref", srcTag.String())
+		}
+		if ui != nil {
+			ui.SetStatus("phase: loading source image from docker daemon")
+		}
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("pull", srcTag.String())
+		}
+		img, err = daemon.Image(srcTag)
+		if err != nil {
+			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("loading source image from daemon: " + err.Error())
+			}
+			return fmt.Errorf("loading source image from daemon: %w", err)
+		}
+	} else {
+		srcParsed, err := name.ParseReference(stripScheme(src))
+		if err != nil {
+			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("invalid source reference: " + err.Error())
+			}
+			return fmt.Errorf("invalid source reference: %w", err)
+		}
+		srcLabel = srcParsed.String()
+		if debugMode {
+			slog.Debug("pulling source image", "ref", srcParsed.String())
+		}
+		if ui != nil {
+			ui.SetStatus("phase: pulling source image")
+		}
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("pull", srcParsed.String())
+		}
+		img, err = remote.Image(srcParsed, srcOpts...)
+		if err != nil {
+			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("pulling source image: " + err.Error())
+			}
+			return fmt.Errorf("pulling source image: %w", err)
+		}
 	}
 
 	// go-containerregistry pull is lazy — remote.WithProgress only fires during push (write.go).
@@ -297,10 +345,46 @@ func runCopy(_ *cobra.Command, args []string) error {
 		if ui != nil {
 			ui.Wait()
 		} else {
-			slog.Info("saved image tarball", "source", srcParsed.String(), "path", filePath)
+			slog.Info("saved image tarball", "source", srcLabel, "path", filePath)
 		}
 		if jsonEmitter != nil {
 			jsonEmitter.Done("success", "saved image tarball")
+		}
+		return nil
+	}
+
+	if dstIsDaemon {
+		dstTag, err := parseDaemonTag(dst)
+		if err != nil {
+			closeProg(nil, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("invalid daemon destination reference: " + err.Error())
+			}
+			return fmt.Errorf("invalid daemon destination reference: %w", err)
+		}
+		if debugMode {
+			slog.Debug("loading image into docker daemon", "ref", dstTag.String())
+		}
+		if ui != nil {
+			ui.SetStatus("phase: loading image into docker daemon")
+		}
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("load", dstTag.String())
+		}
+		if _, err := daemon.Write(dstTag, img); err != nil {
+			closeProg(nil, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("loading image into docker daemon: " + err.Error())
+			}
+			return fmt.Errorf("loading image into docker daemon: %w", err)
+		}
+		if ui != nil {
+			ui.Wait()
+		} else {
+			slog.Info("copied image", "source", srcLabel, "destination", dstTag.String())
+		}
+		if jsonEmitter != nil {
+			jsonEmitter.Done("success", "loaded image into docker daemon")
 		}
 		return nil
 	}
@@ -347,7 +431,7 @@ func runCopy(_ *cobra.Command, args []string) error {
 	if ui != nil {
 		ui.Wait()
 	} else {
-		slog.Info("copied image", "source", srcParsed.String(), "destination", dstParsed.String())
+		slog.Info("copied image", "source", srcLabel, "destination", dstParsed.String())
 	}
 	if jsonEmitter != nil {
 		jsonEmitter.Done("success", "copied image")
@@ -380,7 +464,19 @@ func shortRef(ref string) string {
 func stripScheme(ref string) string {
 	ref = strings.TrimPrefix(ref, "docker://")
 	ref = strings.TrimPrefix(ref, "oci://")
+	ref = strings.TrimPrefix(ref, "docker-daemon://")
+	ref = strings.TrimPrefix(ref, "daemon://")
 	return ref
+}
+
+func isDaemonRef(ref string) bool {
+	return strings.HasPrefix(ref, "docker-daemon://") || strings.HasPrefix(ref, "daemon://")
+}
+
+func parseDaemonTag(ref string) (name.Tag, error) {
+	ref = strings.TrimPrefix(ref, "docker-daemon://")
+	ref = strings.TrimPrefix(ref, "daemon://")
+	return name.NewTag(ref, name.WeakValidation)
 }
 
 func parseCreds(s string) *auth.Options {
