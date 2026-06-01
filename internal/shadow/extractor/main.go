@@ -33,11 +33,11 @@ import (
 //
 //	payloadData(payloadSize) | password(64 bytes hex) | extractTo(extractToSize bytes) | magic(8) | extractToSize(4) | payloadSize(4)
 const (
-	magicStr         = "OCIPATCH"
-	passwordLen      = 64        // hex-encoded 32 random bytes = 64 chars
-	footerSize       = 8 + 4 + 4 // magic(8) + extractToSize(4) + payloadSize(4)
-	checksumFileName = ".app.sha256"
-	payloadPrefix    = "GCM1"
+	magicStr          = "OCIPATCH"
+	passwordLen       = 64        // hex-encoded 32 random bytes = 64 chars
+	footerSize        = 8 + 4 + 4 // magic(8) + extractToSize(4) + payloadSize(4)
+	checksumFileName  = ".app.sha256"
+	payloadPrefixGCM2 = "GCM2"
 )
 
 type options struct {
@@ -62,28 +62,24 @@ func run(args []string) error {
 	selfPath := os.Args[0]
 	slog.Debug("starting extractor", "self", selfPath, "cleanup", opts.cleanup)
 
-	self, err := os.ReadFile(selfPath)
+	self, meta, err := openPayload(selfPath)
 	if err != nil {
-		return fmt.Errorf("reading self: %w", err)
+		return fmt.Errorf("opening payload: %w", err)
 	}
+	defer self.Close()
 
-	payloadData, password, extractTo, err := parsePayload(self)
-	if err != nil {
-		return fmt.Errorf("parsing payload: %w", err)
-	}
-	slog.Debug("payload parsed", "extract_to", extractTo, "payload_bytes", len(payloadData))
-
-	archiveData, err := decryptPayload(payloadData, password)
+	payloadReader := io.NewSectionReader(self, meta.payloadOffset, meta.payloadSize)
+	archiveReader, err := decryptPayloadReader(payloadReader, meta.payloadSize, meta.password)
 	if err != nil {
 		return fmt.Errorf("decrypting payload: %w", err)
 	}
-	slog.Debug("payload decrypted", "archive_bytes", len(archiveData))
+	slog.Debug("payload parsed", "extract_to", meta.extractTo, "payload_bytes", meta.payloadSize)
 
-	if err := os.MkdirAll(extractTo, 0o775); err != nil {
-		return fmt.Errorf("creating extract dir %q: %w", extractTo, err)
+	if err := os.MkdirAll(meta.extractTo, 0o775); err != nil {
+		return fmt.Errorf("creating extract dir %q: %w", meta.extractTo, err)
 	}
 
-	manifest, err := extractArchive(archiveData, extractTo)
+	manifest, sums, err := extractArchive(archiveReader, meta.extractTo)
 	if err != nil {
 		return fmt.Errorf("extracting: %w", err)
 	}
@@ -93,7 +89,7 @@ func run(args []string) error {
 		}
 		slog.Warn("checksum manifest missing; integrity verification skipped")
 	} else {
-		if err := verifyExtractedFiles(extractTo, manifest); err != nil {
+		if err := verifyExtractedChecksums(manifest, sums); err != nil {
 			return fmt.Errorf("integrity check failed: %w", err)
 		}
 		slog.Info("integrity check passed", "files", len(manifest))
@@ -108,6 +104,13 @@ func run(args []string) error {
 	}
 
 	return nil
+}
+
+type payloadMeta struct {
+	payloadOffset int64
+	payloadSize   int64
+	password      string
+	extractTo     string
 }
 
 func parseOptions(args []string) (options, error) {
@@ -179,11 +182,83 @@ func parsePayload(data []byte) (payloadData []byte, password, extractTo string, 
 	return payloadData, password, extractTo, nil
 }
 
-func decryptPayload(payloadData []byte, password string) ([]byte, error) {
-	if len(payloadData) < len(payloadPrefix) || string(payloadData[:len(payloadPrefix)]) != payloadPrefix {
-		return nil, fmt.Errorf("unsupported payload format")
+func openPayload(path string) (*os.File, payloadMeta, error) {
+	self, err := os.Open(path)
+	if err != nil {
+		return nil, payloadMeta{}, fmt.Errorf("opening self: %w", err)
 	}
 
+	stat, err := self.Stat()
+	if err != nil {
+		self.Close()
+		return nil, payloadMeta{}, fmt.Errorf("stat self: %w", err)
+	}
+	if stat.Size() < footerSize {
+		self.Close()
+		return nil, payloadMeta{}, fmt.Errorf("binary too small — no payload")
+	}
+
+	footer := make([]byte, footerSize)
+	if _, err := self.ReadAt(footer, stat.Size()-footerSize); err != nil {
+		self.Close()
+		return nil, payloadMeta{}, fmt.Errorf("reading payload footer: %w", err)
+	}
+
+	var extractToSize, payloadSize int64
+	switch {
+	case string(footer[:8]) == magicStr:
+		extractToSize = int64(binary.LittleEndian.Uint32(footer[8:12]))
+		payloadSize = int64(binary.LittleEndian.Uint32(footer[12:16]))
+	case string(footer[8:16]) == magicStr:
+		payloadSize = int64(binary.LittleEndian.Uint32(footer[0:4]))
+		extractToSize = int64(binary.LittleEndian.Uint32(footer[4:8]))
+	default:
+		self.Close()
+		return nil, payloadMeta{}, fmt.Errorf("no payload attached — use oci-patch shadow action to build this binary")
+	}
+
+	totalPayload := payloadSize + passwordLen + extractToSize + footerSize
+	if stat.Size() < totalPayload {
+		self.Close()
+		return nil, payloadMeta{}, fmt.Errorf("payload size mismatch (corrupt binary?)")
+	}
+
+	base := stat.Size() - totalPayload
+	metaData := make([]byte, passwordLen+extractToSize)
+	if _, err := self.ReadAt(metaData, base+payloadSize); err != nil {
+		self.Close()
+		return nil, payloadMeta{}, fmt.Errorf("reading payload metadata: %w", err)
+	}
+
+	return self, payloadMeta{
+		payloadOffset: base,
+		payloadSize:   payloadSize,
+		password:      string(metaData[:passwordLen]),
+		extractTo:     string(metaData[passwordLen:]),
+	}, nil
+}
+
+func decryptPayloadReader(r io.Reader, payloadSize int64, password string) (io.Reader, error) {
+	prefix := make([]byte, len(payloadPrefixGCM2))
+	if _, err := io.ReadFull(r, prefix); err != nil {
+		return nil, fmt.Errorf("reading payload prefix: %w", err)
+	}
+	if string(prefix) != payloadPrefixGCM2 {
+		return nil, fmt.Errorf("unsupported payload format")
+	}
+	return newChunkedGCMReader(r, password)
+}
+
+type chunkedGCMReader struct {
+	r       io.Reader
+	gcm     cipher.AEAD
+	nonce   []byte
+	counter uint64
+	buf     []byte
+	done    bool
+}
+
+func newChunkedGCMReader(r io.Reader, password string) (io.Reader, error) {
 	key, err := hex.DecodeString(password)
 	if err != nil {
 		return nil, fmt.Errorf("decoding payload key: %w", err)
@@ -197,28 +272,76 @@ func decryptPayload(payloadData []byte, password string) ([]byte, error) {
 		return nil, fmt.Errorf("creating gcm: %w", err)
 	}
 
-	payloadData = payloadData[len(payloadPrefix):]
-	if len(payloadData) < gcm.NonceSize()+gcm.Overhead() {
-		return nil, fmt.Errorf("encrypted payload too small")
+	var chunkSize uint32
+	if err := binary.Read(r, binary.LittleEndian, &chunkSize); err != nil {
+		return nil, fmt.Errorf("reading chunk size: %w", err)
 	}
-	nonce := payloadData[:gcm.NonceSize()]
-	ciphertext := payloadData[gcm.NonceSize():]
-	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, fmt.Errorf("opening gcm payload: %w", err)
+	if chunkSize == 0 {
+		return nil, fmt.Errorf("invalid chunk size 0")
 	}
-	return plain, nil
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(r, nonce); err != nil {
+		return nil, fmt.Errorf("reading nonce: %w", err)
+	}
+	return &chunkedGCMReader{r: r, gcm: gcm, nonce: nonce}, nil
 }
 
-func extractArchive(archiveData []byte, destDir string) (map[string]string, error) {
-	gzr, err := gzip.NewReader(bytes.NewReader(archiveData))
+func (r *chunkedGCMReader) Read(p []byte) (int, error) {
+	for len(r.buf) == 0 && !r.done {
+		if err := r.readChunk(); err != nil {
+			return 0, err
+		}
+	}
+	if len(r.buf) == 0 && r.done {
+		return 0, io.EOF
+	}
+	n := copy(p, r.buf)
+	r.buf = r.buf[n:]
+	return n, nil
+}
+
+func (r *chunkedGCMReader) readChunk() error {
+	var sealedSize uint32
+	if err := binary.Read(r.r, binary.LittleEndian, &sealedSize); err != nil {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			r.done = true
+			return nil
+		}
+		return fmt.Errorf("reading chunk header: %w", err)
+	}
+	if sealedSize < uint32(r.gcm.Overhead()) {
+		return fmt.Errorf("invalid encrypted chunk size %d", sealedSize)
+	}
+	sealed := make([]byte, sealedSize)
+	if _, err := io.ReadFull(r.r, sealed); err != nil {
+		return fmt.Errorf("reading encrypted chunk: %w", err)
+	}
+	plain, err := r.gcm.Open(nil, chunkNonce(r.nonce, r.counter), sealed, nil)
 	if err != nil {
-		return nil, fmt.Errorf("opening gzip: %w", err)
+		return fmt.Errorf("opening gcm chunk %d: %w", r.counter, err)
+	}
+	r.counter++
+	r.buf = plain
+	return nil
+}
+
+func chunkNonce(base []byte, counter uint64) []byte {
+	nonce := append([]byte(nil), base...)
+	binary.BigEndian.PutUint64(nonce[len(nonce)-8:], counter)
+	return nonce
+}
+
+func extractArchive(archiveData io.Reader, destDir string) (map[string]string, map[string]string, error) {
+	gzr, err := gzip.NewReader(archiveData)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening gzip: %w", err)
 	}
 	defer gzr.Close()
 
 	tr := tar.NewReader(gzr)
 	var manifestData []byte
+	extractedSums := map[string]string{}
 
 	for {
 		hdr, err := tr.Next()
@@ -226,7 +349,7 @@ func extractArchive(archiveData []byte, destDir string) (map[string]string, erro
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("reading tar entry: %w", err)
+			return nil, nil, fmt.Errorf("reading tar entry: %w", err)
 		}
 
 		cleanName := filepath.Clean(hdr.Name)
@@ -237,14 +360,14 @@ func extractArchive(archiveData []byte, destDir string) (map[string]string, erro
 			slog.Debug("reading checksum manifest", "entry", cleanName)
 			manifestData, err = io.ReadAll(tr)
 			if err != nil {
-				return nil, fmt.Errorf("reading checksum manifest: %w", err)
+				return nil, nil, fmt.Errorf("reading checksum manifest: %w", err)
 			}
 			continue
 		}
 
 		dstPath := filepath.Join(destDir, cleanName)
 		if !isSubPath(destDir, dstPath) {
-			return nil, fmt.Errorf("tar traversal detected: %s", hdr.Name)
+			return nil, nil, fmt.Errorf("tar traversal detected: %s", hdr.Name)
 		}
 
 		switch hdr.Typeflag {
@@ -252,53 +375,67 @@ func extractArchive(archiveData []byte, destDir string) (map[string]string, erro
 			mode := fileModeFromHeader(hdr, 0o775)
 			slog.Debug("creating directory", "path", dstPath, "mode", fmt.Sprintf("%#o", mode.Perm()))
 			if err := os.MkdirAll(dstPath, mode); err != nil {
-				return nil, fmt.Errorf("creating directory %s: %w", dstPath, err)
+				return nil, nil, fmt.Errorf("creating directory %s: %w", dstPath, err)
 			}
 		case tar.TypeReg, tar.TypeRegA:
 			if err := os.MkdirAll(filepath.Dir(dstPath), 0o775); err != nil {
-				return nil, fmt.Errorf("creating parent for %s: %w", dstPath, err)
+				return nil, nil, fmt.Errorf("creating parent for %s: %w", dstPath, err)
 			}
 			mode := fileModeFromHeader(hdr, 0o664)
-			data, err := io.ReadAll(tr)
+			out, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 			if err != nil {
-				return nil, fmt.Errorf("reading %s: %w", cleanName, err)
+				return nil, nil, fmt.Errorf("opening %s: %w", dstPath, err)
 			}
-			slog.Debug("extracting file", "entry", cleanName, "path", dstPath, "bytes", len(data), "mode", fmt.Sprintf("%#o", mode.Perm()))
-			if err := os.WriteFile(dstPath, data, mode); err != nil {
-				return nil, fmt.Errorf("writing %s: %w", dstPath, err)
+			hasher := sha256.New()
+			written, copyErr := io.Copy(out, io.TeeReader(tr, hasher))
+			closeErr := out.Close()
+			if copyErr != nil {
+				return nil, nil, fmt.Errorf("writing %s: %w", dstPath, copyErr)
 			}
+			if closeErr != nil {
+				return nil, nil, fmt.Errorf("closing %s: %w", dstPath, closeErr)
+			}
+			if err := os.Chmod(dstPath, mode); err != nil {
+				return nil, nil, fmt.Errorf("chmod %s: %w", dstPath, err)
+			}
+			extractedSums[cleanName] = hex.EncodeToString(hasher.Sum(nil))
+			slog.Debug("extracted file", "entry", cleanName, "path", dstPath, "bytes", written, "mode", fmt.Sprintf("%#o", mode.Perm()))
 		case tar.TypeSymlink:
 			if err := os.MkdirAll(filepath.Dir(dstPath), 0o775); err != nil {
-				return nil, fmt.Errorf("creating parent for %s: %w", dstPath, err)
+				return nil, nil, fmt.Errorf("creating parent for %s: %w", dstPath, err)
 			}
 			if err := os.RemoveAll(dstPath); err != nil && !os.IsNotExist(err) {
-				return nil, fmt.Errorf("removing existing %s: %w", dstPath, err)
+				return nil, nil, fmt.Errorf("removing existing %s: %w", dstPath, err)
 			}
 			slog.Debug("creating symlink", "path", dstPath, "target", hdr.Linkname)
 			if err := os.Symlink(hdr.Linkname, dstPath); err != nil {
-				return nil, fmt.Errorf("creating symlink %s -> %s: %w", dstPath, hdr.Linkname, err)
+				return nil, nil, fmt.Errorf("creating symlink %s -> %s: %w", dstPath, hdr.Linkname, err)
 			}
 		case tar.TypeLink:
 			if err := os.MkdirAll(filepath.Dir(dstPath), 0o775); err != nil {
-				return nil, fmt.Errorf("creating parent for %s: %w", dstPath, err)
+				return nil, nil, fmt.Errorf("creating parent for %s: %w", dstPath, err)
 			}
 			linkTarget := filepath.Join(destDir, filepath.Clean(hdr.Linkname))
 			if !isSubPath(destDir, linkTarget) {
-				return nil, fmt.Errorf("hardlink target escapes extract root: %s", hdr.Linkname)
+				return nil, nil, fmt.Errorf("hardlink target escapes extract root: %s", hdr.Linkname)
 			}
 			slog.Debug("creating hardlink", "path", dstPath, "target", linkTarget)
 			if err := os.Link(linkTarget, dstPath); err != nil {
-				return nil, fmt.Errorf("creating hardlink %s -> %s: %w", dstPath, hdr.Linkname, err)
+				return nil, nil, fmt.Errorf("creating hardlink %s -> %s: %w", dstPath, hdr.Linkname, err)
 			}
 		default:
-			return nil, fmt.Errorf("unsupported tar entry %q for %s", hdr.Typeflag, cleanName)
+			return nil, nil, fmt.Errorf("unsupported tar entry %q for %s", hdr.Typeflag, cleanName)
 		}
 	}
 
 	if len(manifestData) == 0 {
-		return nil, nil
+		return nil, extractedSums, nil
 	}
-	return parseChecksumManifest(manifestData)
+	manifest, err := parseChecksumManifest(manifestData)
+	if err != nil {
+		return nil, nil, err
+	}
+	return manifest, extractedSums, nil
 }
 
 func parseChecksumManifest(data []byte) (map[string]string, error) {
@@ -330,6 +467,21 @@ func verifyExtractedFiles(destDir string, manifest map[string]string) error {
 		}
 		sum := sha256.Sum256(data)
 		got := hex.EncodeToString(sum[:])
+		if got != want {
+			slog.Warn("checksum mismatch", "path", relPath, "expected", want, "actual", got)
+			return fmt.Errorf("%s checksum mismatch", relPath)
+		}
+		slog.Debug("checksum verified", "path", relPath, "sha256", got)
+	}
+	return nil
+}
+
+func verifyExtractedChecksums(manifest, extracted map[string]string) error {
+	for relPath, want := range manifest {
+		got, ok := extracted[relPath]
+		if !ok {
+			return fmt.Errorf("%s missing after extraction", relPath)
+		}
 		if got != want {
 			slog.Warn("checksum mismatch", "path", relPath, "expected", want, "actual", got)
 			return fmt.Errorf("%s checksum mismatch", relPath)

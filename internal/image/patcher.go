@@ -4,10 +4,12 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +18,10 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 )
+
+var ErrFileNotFound = errors.New("file not found in image")
+var ErrPathNotFound = errors.New("path not found in image")
+var ErrEmptyImage = errors.New("image filesystem is empty")
 
 func pathHiddenByWhiteout(target, whiteout string) bool {
 	target = strings.Trim(strings.TrimPrefix(target, "/"), "/")
@@ -248,14 +254,19 @@ func findAllByBasename(img v1.Image, basename string) ([]string, error) {
 
 // AddFileLayerConditionalInDirs adds a file only if basename is absent in all given dirs.
 func AddFileLayerConditionalInDirs(img v1.Image, localSrc, dstPath, mode, owner string, dirs []string) (v1.Image, error) {
-	exists, err := fileExistsInDirs(img, path.Base(dstPath), dirs)
+	resolvedSrc, resolvedDst, err := resolveAddFilePaths(localSrc, dstPath)
+	if err != nil {
+		return nil, err
+	}
+
+	exists, err := fileExistsInDirs(img, path.Base(resolvedDst), dirs)
 	if err != nil {
 		return nil, fmt.Errorf("checking existence in dirs: %w", err)
 	}
 	if exists {
 		return img, nil
 	}
-	return AddFileLayer(img, localSrc, dstPath, mode, owner)
+	return addResolvedFileLayer(img, resolvedSrc, resolvedDst, mode, owner)
 }
 
 // ReplaceFile removes every occurrence of findBasename from the image (whiteout),
@@ -278,6 +289,14 @@ func ReplaceFile(img v1.Image, localSrc, dstPath, mode, owner, findBasename stri
 
 // AddFileLayer creates a new image layer containing a single local file.
 func AddFileLayer(img v1.Image, localSrc, dstPath, mode, owner string) (v1.Image, error) {
+	resolvedSrc, resolvedDst, err := resolveAddFilePaths(localSrc, dstPath)
+	if err != nil {
+		return nil, err
+	}
+	return addResolvedFileLayer(img, resolvedSrc, resolvedDst, mode, owner)
+}
+
+func addResolvedFileLayer(img v1.Image, localSrc, dstPath, mode, owner string) (v1.Image, error) {
 	data, err := os.ReadFile(localSrc)
 	if err != nil {
 		return nil, fmt.Errorf("reading %q: %w", localSrc, err)
@@ -296,6 +315,34 @@ func AddFileLayer(img v1.Image, localSrc, dstPath, mode, owner string) (v1.Image
 	}
 
 	return mutate.AppendLayers(img, layer)
+}
+
+func resolveAddFilePaths(localSrc, dstPath string) (string, string, error) {
+	resolvedSrc := localSrc
+	if hasGlobMeta(localSrc) {
+		matches, err := filepath.Glob(localSrc)
+		if err != nil {
+			return "", "", fmt.Errorf("invalid src glob %q: %w", localSrc, err)
+		}
+		sort.Strings(matches)
+		switch len(matches) {
+		case 0:
+			return "", "", fmt.Errorf("src glob %q matched no files", localSrc)
+		case 1:
+			resolvedSrc = matches[0]
+		default:
+			return "", "", fmt.Errorf("src glob %q matched multiple files: %s", localSrc, strings.Join(matches, ", "))
+		}
+	}
+
+	if strings.HasSuffix(dstPath, "/") {
+		dstPath = path.Join(dstPath, filepath.Base(resolvedSrc))
+	}
+	return resolvedSrc, dstPath, nil
+}
+
+func hasGlobMeta(s string) bool {
+	return strings.ContainsAny(s, "*?[")
 }
 
 // AddDirLayer appends all files from a local directory as a new layer.
@@ -341,6 +388,10 @@ func AddDirLayer(img v1.Image, localSrc, dstPath, mode, owner string) (v1.Image,
 
 // AddFileLayerConditional adds a file only when condition allows it.
 func AddFileLayerConditional(img v1.Image, localSrc, dstPath, mode, owner, ifNotExists string) (v1.Image, error) {
+	resolvedSrc, resolvedDst, err := resolveAddFilePaths(localSrc, dstPath)
+	if err != nil {
+		return nil, err
+	}
 	if ifNotExists != "" {
 		exists, err := fileExistsInImage(img, ifNotExists)
 		if err != nil {
@@ -350,7 +401,7 @@ func AddFileLayerConditional(img v1.Image, localSrc, dstPath, mode, owner, ifNot
 			return img, nil
 		}
 	}
-	return AddFileLayer(img, localSrc, dstPath, mode, owner)
+	return addResolvedFileLayer(img, resolvedSrc, resolvedDst, mode, owner)
 }
 
 // RemoveFile appends a whiteout entry that removes a path from the image.
@@ -395,6 +446,23 @@ func ExtractFileToLocal(img v1.Image, srcPath, localDst string) error {
 		return err
 	}
 	return os.WriteFile(localDst, data, 0o644)
+}
+
+// ReadFile returns a regular file from the effective image filesystem.
+func ReadFile(img v1.Image, srcPath string) ([]byte, error) {
+	normalizedPath := normalizeImagePath(srcPath)
+	if normalizedPath == "/" {
+		return nil, fmt.Errorf("path %q is not a regular file", normalizedPath)
+	}
+
+	data, err := extractFileFromImage(img, normalizedPath)
+	if err != nil {
+		if errors.Is(err, ErrFileNotFound) {
+			return nil, fmt.Errorf("%w: %s", ErrFileNotFound, normalizedPath)
+		}
+		return nil, err
+	}
+	return data, nil
 }
 
 // UnzipTo extracts a zip/jar file from inside the image and adds the contents as a new layer.
@@ -477,6 +545,7 @@ func extractFileFromImage(img v1.Image, targetPath string) ([]byte, error) {
 
 			name := strings.TrimPrefix(hdr.Name, "./")
 			name = strings.TrimPrefix(name, "/")
+			name = strings.TrimSuffix(name, "/")
 			if strings.HasPrefix(path.Base(name), ".wh.") {
 				realName := path.Join(path.Dir(name), strings.TrimPrefix(path.Base(name), ".wh."))
 				layerWhiteouts[strings.TrimPrefix(realName, "/")] = struct{}{}
@@ -484,6 +553,10 @@ func extractFileFromImage(img v1.Image, targetPath string) ([]byte, error) {
 			}
 
 			if name == targetPath {
+				if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA && hdr.Typeflag != 0 {
+					rc.Close()
+					return nil, fmt.Errorf("path %q is not a regular file", targetPath)
+				}
 				data, err := io.ReadAll(tr)
 				if err != nil {
 					rc.Close()
@@ -498,12 +571,12 @@ func extractFileFromImage(img v1.Image, targetPath string) ([]byte, error) {
 		}
 		for deleted := range layerWhiteouts {
 			if pathHiddenByWhiteout(targetPath, deleted) {
-				return nil, fmt.Errorf("file %q not found in image (whiteout)", targetPath)
+				return nil, fmt.Errorf("%w: %s (whiteout)", ErrFileNotFound, targetPath)
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("file %q not found in image", targetPath)
+	return nil, fmt.Errorf("%w: %s", ErrFileNotFound, targetPath)
 }
 
 func singleFileTarLayer(dstPath string, data []byte, perm os.FileMode, uid, gid int) (v1.Layer, error) {
@@ -569,9 +642,14 @@ type TreeEntry struct {
 	Mode     os.FileMode
 	UID      int
 	GID      int
+	ModTime  time.Time
 	IsDir    bool
 	Typeflag byte
 	Linkname string
+}
+
+func normalizeImagePath(p string) string {
+	return "/" + strings.Trim(strings.TrimPrefix(p, "/"), "/")
 }
 
 // CollectTree returns the effective file tree rooted at targetPath.
@@ -658,6 +736,7 @@ func CollectTree(img v1.Image, targetPath string) ([]TreeEntry, error) {
 					Mode:     hdr.FileInfo().Mode(),
 					UID:      hdr.Uid,
 					GID:      hdr.Gid,
+					ModTime:  hdr.ModTime,
 					IsDir:    hdr.Typeflag == tar.TypeDir,
 					Typeflag: hdr.Typeflag,
 					Linkname: hdr.Linkname,
@@ -689,9 +768,9 @@ func CollectTree(img v1.Image, targetPath string) ([]TreeEntry, error) {
 	}
 	if len(entries) == 0 {
 		if includeAll {
-			return nil, fmt.Errorf("image filesystem is empty")
+			return nil, ErrEmptyImage
 		}
-		return nil, fmt.Errorf("path %q not found in image", "/"+targetPath)
+		return nil, fmt.Errorf("%w: %s", ErrPathNotFound, "/"+targetPath)
 	}
 
 	for absPath, entry := range entries {
@@ -734,6 +813,74 @@ func CollectTree(img v1.Image, targetPath string) ([]TreeEntry, error) {
 		}
 		if result[i].IsDir != result[j].IsDir {
 			return result[i].IsDir
+		}
+		return result[i].Path < result[j].Path
+	})
+	return result, nil
+}
+
+// ListEntries returns the immediate entries under targetPath, or the file itself.
+func ListEntries(img v1.Image, targetPath string) ([]TreeEntry, error) {
+	targetPath = normalizeImagePath(targetPath)
+	entries, err := CollectTree(img, targetPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if targetPath != "/" {
+		for _, entry := range entries {
+			if entry.Path == targetPath && !entry.IsDir {
+				return []TreeEntry{entry}, nil
+			}
+		}
+	}
+
+	entryMap := make(map[string]TreeEntry, len(entries))
+	for _, entry := range entries {
+		entryMap[entry.Path] = entry
+	}
+
+	childPaths := map[string]struct{}{}
+	for _, entry := range entries {
+		if entry.Path == targetPath {
+			continue
+		}
+		if targetPath != "/" && !strings.HasPrefix(entry.Path, targetPath+"/") {
+			continue
+		}
+
+		rel := strings.TrimPrefix(entry.Path, targetPath)
+		rel = strings.TrimPrefix(rel, "/")
+		if rel == "" {
+			continue
+		}
+
+		child := rel
+		if i := strings.IndexByte(rel, '/'); i >= 0 {
+			child = rel[:i]
+		}
+		childPaths[path.Join(targetPath, child)] = struct{}{}
+	}
+
+	result := make([]TreeEntry, 0, len(childPaths))
+	for childPath := range childPaths {
+		if entry, ok := entryMap[childPath]; ok {
+			result = append(result, entry)
+			continue
+		}
+		result = append(result, TreeEntry{
+			Path:     childPath,
+			Mode:     0o755,
+			IsDir:    true,
+			Typeflag: tar.TypeDir,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		left := strings.ToLower(path.Base(result[i].Path))
+		right := strings.ToLower(path.Base(result[j].Path))
+		if left != right {
+			return left < right
 		}
 		return result[i].Path < result[j].Path
 	})

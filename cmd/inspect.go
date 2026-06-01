@@ -39,6 +39,7 @@ func init() {
 	inspectCmd.Flags().StringVar(&inspectVariant, "override-variant", "", "override variant (e.g. v8)")
 	inspectCmd.Flags().BoolVar(&inspectNoTags, "no-tags", false, "skip fetching repository tags")
 	inspectCmd.Flags().BoolVar(&inspectInsecure, "insecure", false, "skip TLS certificate verification")
+	inspectCmd.Flags().BoolVar(&inspectInsecure, "src-insecure", false, "skip TLS certificate verification for source registry")
 	rootCmd.AddCommand(inspectCmd)
 }
 

@@ -1,8 +1,7 @@
 // Package shadow implements the oci-patch shadow action:
-// it packs a path inside an image into a tar.gz archive, encrypts the whole
-// payload as a single opaque AES-256-GCM blob, then produces a self-extracting
-// static binary (app.self) that unpacks the content at runtime inside the
-// container.
+// it packs a path inside an image into a tar.gz archive, encrypts it as a
+// chunked AES-256-GCM payload, then produces a self-extracting static binary
+// (app.self) that unpacks the content at runtime inside the container.
 package shadow
 
 import (
@@ -35,7 +34,8 @@ const (
 	magicStr         = "OCIPATCH"
 	passwordLen      = 64 // hex(32 random bytes)
 	checksumFileName = ".app.sha256"
-	payloadPrefix    = "GCM1"
+	payloadPrefix    = "GCM2"
+	payloadChunkSize = 1024 * 1024
 )
 
 // extractorSrcDir is the path to the extractor source relative to the module root.
@@ -228,11 +228,31 @@ func encryptPayload(plain []byte, password string) ([]byte, error) {
 		return nil, fmt.Errorf("generating nonce: %w", err)
 	}
 
-	out := bytes.NewBuffer(make([]byte, 0, len(payloadPrefix)+len(nonce)+len(plain)+gcm.Overhead()))
+	out := bytes.NewBuffer(make([]byte, 0, len(payloadPrefix)+4+len(nonce)+len(plain)+gcm.Overhead()))
 	out.WriteString(payloadPrefix)
+	if err := binary.Write(out, binary.LittleEndian, uint32(payloadChunkSize)); err != nil {
+		return nil, err
+	}
 	out.Write(nonce)
-	out.Write(gcm.Seal(nil, nonce, plain, nil))
+	for counter, offset := uint64(0), 0; offset < len(plain); counter, offset = counter+1, offset+payloadChunkSize {
+		end := offset + payloadChunkSize
+		if end > len(plain) {
+			end = len(plain)
+		}
+		chunkNonce := chunkNonce(nonce, counter)
+		sealed := gcm.Seal(nil, chunkNonce, plain[offset:end], nil)
+		if err := binary.Write(out, binary.LittleEndian, uint32(len(sealed))); err != nil {
+			return nil, err
+		}
+		out.Write(sealed)
+	}
 	return out.Bytes(), nil
+}
+
+func chunkNonce(base []byte, counter uint64) []byte {
+	nonce := append([]byte(nil), base...)
+	binary.BigEndian.PutUint64(nonce[len(nonce)-8:], counter)
+	return nonce
 }
 
 func buildChecksumManifest(files []fileEntry) []byte {

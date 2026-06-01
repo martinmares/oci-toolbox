@@ -93,30 +93,30 @@ func TestParseOptions(t *testing.T) {
 	}
 }
 
-func TestDecryptPayloadAndExtractArchive(t *testing.T) {
+func TestDecryptPayloadReaderAndExtractArchiveChunked(t *testing.T) {
 	password := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	plain := buildTestArchive(t)
 
-	payload, err := encryptForTest(plain, password)
+	payload, err := encryptChunkedForTest(plain, password, 3)
 	if err != nil {
-		t.Fatalf("encryptForTest: %v", err)
+		t.Fatalf("encryptChunkedForTest: %v", err)
 	}
 
-	gotPlain, err := decryptPayload(payload, password)
+	archiveReader, err := decryptPayloadReader(bytes.NewReader(payload), int64(len(payload)), password)
 	if err != nil {
-		t.Fatalf("decryptPayload: %v", err)
+		t.Fatalf("decryptPayloadReader: %v", err)
 	}
 
 	dir := t.TempDir()
-	manifest, err := extractArchive(gotPlain, dir)
+	manifest, sums, err := extractArchive(archiveReader, dir)
 	if err != nil {
 		t.Fatalf("extractArchive: %v", err)
 	}
 	if len(manifest) != 1 {
 		t.Fatalf("manifest entries = %d, want 1", len(manifest))
 	}
-	if err := verifyExtractedFiles(dir, manifest); err != nil {
-		t.Fatalf("verifyExtractedFiles: %v", err)
+	if err := verifyExtractedChecksums(manifest, sums); err != nil {
+		t.Fatalf("verifyExtractedChecksums: %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(dir, "app.txt"))
@@ -160,7 +160,7 @@ func buildTestArchive(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-func encryptForTest(plain []byte, password string) ([]byte, error) {
+func encryptChunkedForTest(plain []byte, password string, chunkSize int) ([]byte, error) {
 	key, err := hex.DecodeString(password)
 	if err != nil {
 		return nil, err
@@ -175,8 +175,21 @@ func encryptForTest(plain []byte, password string) ([]byte, error) {
 	}
 	nonce := bytes.Repeat([]byte{0x42}, gcm.NonceSize())
 	out := bytes.NewBuffer(nil)
-	out.WriteString(payloadPrefix)
+	out.WriteString(payloadPrefixGCM2)
+	if err := binary.Write(out, binary.LittleEndian, uint32(chunkSize)); err != nil {
+		return nil, err
+	}
 	out.Write(nonce)
-	out.Write(gcm.Seal(nil, nonce, plain, nil))
+	for counter, offset := uint64(0), 0; offset < len(plain); counter, offset = counter+1, offset+chunkSize {
+		end := offset + chunkSize
+		if end > len(plain) {
+			end = len(plain)
+		}
+		sealed := gcm.Seal(nil, chunkNonce(nonce, counter), plain[offset:end], nil)
+		if err := binary.Write(out, binary.LittleEndian, uint32(len(sealed))); err != nil {
+			return nil, err
+		}
+		out.Write(sealed)
+	}
 	return out.Bytes(), nil
 }

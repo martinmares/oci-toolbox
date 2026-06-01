@@ -3,8 +3,11 @@ package image_test
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/v1/empty"
@@ -33,6 +36,78 @@ func TestAddFileLayer_basic(t *testing.T) {
 	got, _ := os.ReadFile(tmp)
 	if string(got) != string(content) {
 		t.Errorf("content mismatch: got %q, want %q", got, content)
+	}
+}
+
+func TestReadFileRejectsDirectory(t *testing.T) {
+	buf := &bytes.Buffer{}
+	tw := tar.NewWriter(buf)
+	if err := tw.WriteHeader(&tar.Header{Name: "app/", Mode: 0o755, Typeflag: tar.TypeDir}); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	layer, err := tarball.LayerFromReader(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("LayerFromReader: %v", err)
+	}
+	img, err := mutate.AppendLayers(empty.Image, layer)
+	if err != nil {
+		t.Fatalf("AppendLayers: %v", err)
+	}
+
+	_, err = image.ReadFile(img, "/app")
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("ReadFile error = %v, want regular-file error", err)
+	}
+}
+
+func TestAddFileLayer_globToDirectory(t *testing.T) {
+	img := testutil.NewImage(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "zis_stream_entities_account_ref-0.1.0-SNAPSHOT.jar")
+	content := []byte("jar content")
+	if err := os.WriteFile(src, content, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	img2, err := image.AddFileLayer(img, filepath.Join(dir, "*SNAPSHOT.jar"), "/app/", "0644", "")
+	if err != nil {
+		t.Fatalf("AddFileLayer: %v", err)
+	}
+
+	tmp := filepath.Join(t.TempDir(), "app.jar")
+	if err := image.ExtractFileToLocal(img2, "/app/zis_stream_entities_account_ref-0.1.0-SNAPSHOT.jar", tmp); err != nil {
+		t.Fatalf("ExtractFileToLocal: %v", err)
+	}
+
+	got, _ := os.ReadFile(tmp)
+	if string(got) != string(content) {
+		t.Errorf("content mismatch: got %q, want %q", got, content)
+	}
+}
+
+func TestAddFileLayer_globNoMatches(t *testing.T) {
+	img := testutil.NewImage(t)
+	_, err := image.AddFileLayer(img, filepath.Join(t.TempDir(), "*SNAPSHOT.jar"), "/app/", "0644", "")
+	if err == nil || !strings.Contains(err.Error(), "matched no files") {
+		t.Fatalf("AddFileLayer error = %v, want no-match error", err)
+	}
+}
+
+func TestAddFileLayer_globMultipleMatches(t *testing.T) {
+	img := testutil.NewImage(t)
+	dir := t.TempDir()
+	for _, name := range []string{"one-SNAPSHOT.jar", "two-SNAPSHOT.jar"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	}
+
+	_, err := image.AddFileLayer(img, filepath.Join(dir, "*SNAPSHOT.jar"), "/app/", "0644", "")
+	if err == nil || !strings.Contains(err.Error(), "matched multiple files") {
+		t.Fatalf("AddFileLayer error = %v, want multiple-match error", err)
 	}
 }
 
@@ -511,6 +586,76 @@ func TestExtractFileToLocal_notFound(t *testing.T) {
 	err := image.ExtractFileToLocal(img, "/nonexistent/path", t.TempDir()+"/out")
 	if err == nil {
 		t.Error("expected error for missing file, got nil")
+	}
+}
+
+func TestReadFile(t *testing.T) {
+	img := testutil.NewImageWithFiles(t, map[string][]byte{
+		"app/resources/git.properties": []byte("git.commit.id=abc123\n"),
+	})
+
+	data, err := image.ReadFile(img, "/app/resources/git.properties")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "git.commit.id=abc123\n" {
+		t.Fatalf("ReadFile = %q, want git.properties content", data)
+	}
+}
+
+func TestReadFileNotFound(t *testing.T) {
+	img := testutil.NewImage(t)
+
+	_, err := image.ReadFile(img, "/app/resources/git.properties")
+	if !errors.Is(err, image.ErrFileNotFound) {
+		t.Fatalf("ReadFile error = %v, want ErrFileNotFound", err)
+	}
+}
+
+func TestListEntriesFile(t *testing.T) {
+	img := testutil.NewImageWithFiles(t, map[string][]byte{
+		"app/resources/git.properties": []byte("git.commit.id=abc123\n"),
+	})
+
+	entries, err := image.ListEntries(img, "/app/resources/git.properties")
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries len = %d, want 1", len(entries))
+	}
+	if entries[0].Path != "/app/resources/git.properties" {
+		t.Fatalf("entry path = %q, want file path", entries[0].Path)
+	}
+}
+
+func TestListEntriesDir(t *testing.T) {
+	img := testutil.NewImageWithFiles(t, map[string][]byte{
+		"app/resources/git.properties": []byte("git.commit.id=abc123\n"),
+		"app/other.txt":                []byte("hello"),
+	})
+
+	entries, err := image.ListEntries(img, "/app")
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries len = %d, want 2", len(entries))
+	}
+	if entries[0].Path != "/app/other.txt" && entries[1].Path != "/app/other.txt" {
+		t.Fatalf("missing /app/other.txt in %v", entries)
+	}
+	if entries[0].Path != "/app/resources" && entries[1].Path != "/app/resources" {
+		t.Fatalf("missing /app/resources in %v", entries)
+	}
+}
+
+func TestListEntriesNotFound(t *testing.T) {
+	img := testutil.NewImage(t)
+
+	_, err := image.ListEntries(img, "/missing")
+	if !errors.Is(err, image.ErrPathNotFound) {
+		t.Fatalf("ListEntries error = %v, want ErrPathNotFound", err)
 	}
 }
 

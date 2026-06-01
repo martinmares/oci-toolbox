@@ -144,7 +144,7 @@ func treeEntryMap(entries []TreeEntry) map[string]TreeEntry {
 }
 
 func treeEntryEqual(a, b TreeEntry) bool {
-	if a.Typeflag != b.Typeflag || a.Linkname != b.Linkname || a.UID != b.UID || a.GID != b.GID || a.Mode != b.Mode {
+	if a.Typeflag != b.Typeflag || a.Linkname != b.Linkname || a.UID != b.UID || a.GID != b.GID || a.Mode != b.Mode || !a.ModTime.Equal(b.ModTime) {
 		return false
 	}
 	if a.IsDir || a.Typeflag == tar.TypeDir || a.Typeflag == tar.TypeSymlink || a.Typeflag == tar.TypeLink {
