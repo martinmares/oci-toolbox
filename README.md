@@ -14,6 +14,9 @@
 - [Commands](#commands)
   - [copy](#copy)
   - [inspect](#inspect)
+  - [cat](#cat)
+  - [ls](#ls)
+  - [tree](#tree)
 - [Credentials](#credentials)
 - [Recipes](#recipes)
   - [Recipe structure](#recipe-structure)
@@ -48,6 +51,7 @@ This requires a running Docker daemon, a Dockerfile, and intermediate containers
 |---------|--------|-----------|
 | Copy image between registries | ✅ | ✅ |
 | Inspect image metadata (JSON) | ✅ | ✅ |
+| Print a file from an image | ❌ | ✅ |
 | List repository tags | ✅ | ✅ (`inspect` fetches tags automatically) |
 | No Docker daemon required | ✅ | ✅ |
 | `~/.docker/config.json` auth | ✅ | ✅ |
@@ -63,6 +67,8 @@ This requires a running Docker daemon, a Dockerfile, and intermediate containers
 | **Rebase onto different base image** | ❌ | ✅ |
 | **Extract files from image to local** | ❌ | ✅ |
 | **Unzip archives inside image** | ❌ | ✅ |
+| **List directory entries in image** | ❌ | ✅ |
+| **Print tree view of image path** | ❌ | ✅ |
 | **Declarative YAML recipes** | ❌ | ✅ |
 | **Multiple recipes per copy** | ❌ | ✅ |
 | **Conditional steps (if-not-exists)** | ❌ | ✅ |
@@ -137,8 +143,11 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 | `--dest-creds user:pass` | Destination registry credentials |
 | `--recipe path/to/recipe.yml` | Recipe file to apply (repeatable) |
 | `--debug` | Enable verbose output |
+| `--batch-file path/to/images.yml` | Run multiple copy jobs from a YAML file |
+| `--continue-on-error` | Continue batch processing after a copy fails |
 | `--dest-no-reuse` | Disable cross-repository blob mount/reuse at destination (retry fallback) |
 | `--reduce` | Materialize the final filesystem into a single minimal layer |
+| `--reduce-changes` | Preserve base layers and reduce recipe changes into one delta layer |
 | `--progress` | Render terminal progress bars |
 | `--progress-json` | Emit machine-readable progress events as JSONL |
 
@@ -186,6 +195,31 @@ oci-patch copy --progress-json \
   docker://src/app:tag docker://dst/app:tag
 ```
 
+### Batch Copy
+
+Use `--batch-file` when you need to copy multiple images with the same CLI options. The shared flags are applied to every entry in the file.
+
+```yaml
+# images.yml
+copy:
+  - src: harbor.cetin/tsm/release/tsm-config:TSM-Core_RE60_BF01_01.01
+    dest: harbor.cetin/tsm/release/tsm-config:2.2-test-latest
+  - src: harbor.cetin/tsm/release/tsm-ticket:TSM-Core_RE60_BF01_01.01
+    dest: harbor.cetin/tsm/release/tsm-ticket:2.2-test-latest
+```
+
+```bash
+oci-patch copy \
+  --batch-file images.yml \
+  --src-insecure \
+  --dest-insecure \
+  --progress
+```
+
+Batch jobs run sequentially. Without `--continue-on-error`, the first failed copy stops the batch. With `--continue-on-error`, later entries still run, but the command returns a non-zero exit code at the end if any entry failed and prints a failure summary.
+
+The primary batch keys are `src` and `dest`, matching the `--src-*` and `--dest-*` CLI flags. `source` and `destination` are also accepted as aliases. Duplicate destination images are rejected during validation.
+
 ### inspect
 
 ```
@@ -203,6 +237,7 @@ Fetches and displays image metadata as JSON (skopeo-compatible format).
 | `--override-arch arm64` | Select specific architecture |
 | `--override-variant v8` | Select specific variant |
 | `--no-tags` | Skip fetching repository tags (faster) |
+| `--insecure` / `--src-insecure` | Skip TLS certificate verification for the source registry |
 
 **Examples:**
 
@@ -212,6 +247,9 @@ oci-patch inspect docker://docker.io/library/alpine:3.21
 
 # With credentials
 oci-patch inspect --creds user:pass docker://registry.example.com/app:latest
+
+# Registry with a non-standard/self-signed certificate
+oci-patch inspect --src-insecure docker://registry.example.com/app:latest
 
 # Select specific platform from multi-arch index
 oci-patch inspect \
@@ -246,6 +284,89 @@ oci-patch inspect --no-tags docker://registry.example.com/app:latest
     ],
     "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
 }
+```
+
+### cat
+
+```
+oci-patch cat [flags] IMAGE PATH
+```
+
+Fetches an image and prints one regular file from its filesystem to stdout.
+
+If the file does not exist, `cat` exits successfully and prints nothing. With `--debug`, the command also logs a warning about the missing file.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--creds user:pass` | Registry credentials |
+| `--override-os linux` | Select specific OS from multi-platform index |
+| `--override-arch arm64` | Select specific architecture |
+| `--override-variant v8` | Select specific variant |
+| `--insecure` / `--src-insecure` | Skip TLS certificate verification for the source registry |
+| `--debug` | Enable verbose output, including missing-file warnings |
+
+**Examples:**
+
+```bash
+oci-patch cat \
+  --src-insecure \
+  docker://harbor.cetin/tsm/stage/tsm-gateway:2.2-test-latest \
+  /app/resources/git.properties
+
+# Missing files are silent unless --debug is used
+oci-patch cat --debug docker://registry.example.com/app:latest /missing/file
+```
+
+### ls
+
+```
+oci-patch ls [flags] IMAGE PATH
+```
+
+Lists entries under a path inside an image. Missing paths are silent by default and only log a warning with `--debug`.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--creds user:pass` | Registry credentials |
+| `--override-os linux` | Select specific OS from multi-platform index |
+| `--override-arch arm64` | Select specific architecture |
+| `--override-variant v8` | Select specific variant |
+| `--insecure` / `--src-insecure` | Skip TLS certificate verification for the source registry |
+| `--debug` | Enable verbose output, including missing-path warnings |
+
+**Example:**
+
+```bash
+oci-patch ls --src-insecure docker://registry.example.com/app:latest /app/resources
+```
+
+### tree
+
+```
+oci-patch tree [flags] IMAGE PATH
+```
+
+Prints a tree view of the subtree rooted at the given path. Missing paths are silent by default and only log a warning with `--debug`.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--creds user:pass` | Registry credentials |
+| `--override-os linux` | Select specific OS from multi-platform index |
+| `--override-arch arm64` | Select specific architecture |
+| `--override-variant v8` | Select specific variant |
+| `--insecure` / `--src-insecure` | Skip TLS certificate verification for the source registry |
+| `--debug` | Enable verbose output, including missing-path warnings |
+
+**Example:**
+
+```bash
+oci-patch tree --src-insecure docker://registry.example.com/app:latest /app
 ```
 
 ---
@@ -309,6 +430,8 @@ steps:
   condition:
     if-not-exists: /usr/local/bin/encjson   # optional, see Conditions
 ```
+
+`src` may contain a glob pattern such as `./target/uberjar/*SNAPSHOT.jar`, but it must match exactly one file. When `dst` ends with a slash, it is treated as a directory and the target filename is taken from the matched `src`.
 
 **`add-dir`** — Add all files from a local directory as a new layer.
 
@@ -382,6 +505,8 @@ steps:
 - action: use-base
   from: alpine-base     # source id defined in sources:
 ```
+
+`use-base` is the declarative equivalent of switching to a new `FROM alpine-base` in the middle of a multi-stage Dockerfile. Before that step, the recipe works on the image passed on the CLI. After `use-base`, the current working image becomes the selected source and later steps write into that image. If you still need files from the original source image, declare it in `sources` with `ref: "{{.SourceImage}}"` and use `from: original` on steps such as `copy-file-from` or `shadow`.
 
 **`shadow`** — Pack a file tree into an encrypted self-extracting binary and replace the original path with that bootstrap binary. By default it reads from the current working image; with `from:` it can read from another named source while writing into the current image.
 
@@ -521,7 +646,7 @@ Steps can then reference any of these by `from: <id>`. This is equivalent to Doc
 
 This also applies to `shadow`: you can take `/app` from the original source image, switch to a different base image with `use-base`, and then inject only `/app/app.self` into the new base.
 
-### `--reduce`
+### `--reduce` and `--reduce-changes`
 
 `--reduce` does more than a classic layer squash. It materializes the effective final filesystem after all recipe steps into a single layer, so paths removed or replaced by whiteouts are not carried forward into the output image.
 
@@ -532,6 +657,23 @@ This is especially useful with `shadow`, where the final image can contain only:
 - the minimal bootstrap directory metadata for `/app`
 
 The result is typically close to the original image size plus the `app.self` overhead, not the original `/app` plus `app.self`.
+
+`--reduce-changes` is for a different case: you want to keep the original base image layers for cache/reuse, but you do not want many small recipe layers. The output then contains:
+
+- all base image layers
+- one new delta layer with the effective recipe changes
+
+If the recipe does not use `use-base`, the CLI source image is used as the base. If the recipe uses `use-base`, the image from the last `use-base` step is used as the base and the delta is computed against it.
+
+In practice:
+
+```bash
+# One output layer containing the whole final filesystem.
+oci-patch copy --recipe app.yml --reduce SOURCE DEST
+
+# Original/base layers stay intact, recipe changes become one extra layer.
+oci-patch copy --recipe app.yml --reduce-changes SOURCE DEST
+```
 
 ---
 

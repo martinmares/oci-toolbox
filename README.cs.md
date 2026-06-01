@@ -14,6 +14,9 @@
 - [Příkazy](#příkazy)
   - [copy](#copy)
   - [inspect](#inspect)
+  - [cat](#cat)
+  - [ls](#ls)
+  - [tree](#tree)
 - [Credentials](#credentials)
 - [Recipe](#recipe)
   - [Struktura recipe](#struktura-recipe)
@@ -48,6 +51,7 @@ To vyžaduje běžící Docker daemon, Dockerfile a mezikontejnery. `oci-patch` 
 |--------|--------|-----------|
 | Kopie image mezi registry | ✅ | ✅ |
 | Inspect metadat image (JSON) | ✅ | ✅ |
+| Výpis souboru z image | ❌ | ✅ |
 | Výpis tagů repozitáře | ✅ | ✅ (automaticky při inspect) |
 | Bez Docker daemona | ✅ | ✅ |
 | Auth přes `~/.docker/config.json` | ✅ | ✅ |
@@ -63,6 +67,8 @@ To vyžaduje běžící Docker daemon, Dockerfile a mezikontejnery. `oci-patch` 
 | **Změna base image** | ❌ | ✅ |
 | **Extrakce souborů z image na disk** | ❌ | ✅ |
 | **Rozbalení archivů uvnitř image** | ❌ | ✅ |
+| **Výpis adresáře v image** | ❌ | ✅ |
+| **Výpis stromu cesty v image** | ❌ | ✅ |
 | **Deklarativní YAML recipe** | ❌ | ✅ |
 | **Více recipe na jeden copy** | ❌ | ✅ |
 | **Podmíněné kroky (if-not-exists)** | ❌ | ✅ |
@@ -137,8 +143,11 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 | `--dest-creds user:pass` | Credentials pro cílový registry |
 | `--recipe cesta/k/recipe.yml` | Recipe soubor (lze opakovat) |
 | `--debug` | Zapne podrobný výstup |
+| `--batch-file cesta/k/images.yml` | Spustí více copy jobů ze YAML souboru |
+| `--continue-on-error` | V batch režimu pokračuje další položkou po selhání |
 | `--dest-no-reuse` | Zakáže cross-repository blob mount/reuse v cíli (fallback při problémech) |
 | `--reduce` | Materializuje finální filesystem do jediné minimální vrstvy |
+| `--reduce-changes` | Zachová base vrstvy a změny z recipe sloučí do jedné delta vrstvy |
 | `--progress` | Vykreslí terminálové progress bary |
 | `--progress-json` | Emituje machine-readable progress eventy jako JSONL |
 
@@ -186,6 +195,31 @@ oci-patch copy --progress-json \
   docker://src/app:tag docker://dst/app:tag
 ```
 
+### Batch copy
+
+Pro opakované kopírování více image můžeš použít `--batch-file`. Stejné CLI flagy se aplikují na všechny položky v souboru.
+
+```yaml
+# images.yml
+copy:
+  - src: harbor.cetin/tsm/release/tsm-config:TSM-Core_RE60_BF01_01.01
+    dest: harbor.cetin/tsm/release/tsm-config:2.2-test-latest
+  - src: harbor.cetin/tsm/release/tsm-ticket:TSM-Core_RE60_BF01_01.01
+    dest: harbor.cetin/tsm/release/tsm-ticket:2.2-test-latest
+```
+
+```bash
+oci-patch copy \
+  --batch-file images.yml \
+  --src-insecure \
+  --dest-insecure \
+  --progress
+```
+
+Batch běží sériově. Bez `--continue-on-error` se zastaví na první chybě. S `--continue-on-error` pokračuje dalšími položkami, ale pokud aspoň jedna položka selže, příkaz na konci vrátí nenulový exit code a vypíše souhrn selhání.
+
+Primární klíče v batch souboru jsou `src` a `dest`, stejně jako CLI flagy `--src-*` a `--dest-*`. Jako aliasy jsou podporované i `source` a `destination`. Duplicitní cílové image jsou odmítnuté při validaci souboru.
+
 ### inspect
 
 ```
@@ -203,6 +237,7 @@ Stáhne a zobrazí metadata image jako JSON (formát kompatibilní se skopeo).
 | `--override-arch arm64` | Výběr architektury |
 | `--override-variant v8` | Výběr varianty |
 | `--no-tags` | Přeskočí načítání tagů (rychlejší) |
+| `--insecure` / `--src-insecure` | Přeskočí TLS ověření certifikátu zdrojového registry |
 
 **Příklady:**
 
@@ -212,6 +247,9 @@ oci-patch inspect docker://docker.io/library/alpine:3.21
 
 # S credentials
 oci-patch inspect --creds user:pass docker://registry.example.com/app:latest
+
+# Registry s nestandardním/self-signed certifikátem
+oci-patch inspect --src-insecure docker://registry.example.com/app:latest
 
 # Konkrétní platforma z multi-arch indexu
 oci-patch inspect \
@@ -246,6 +284,89 @@ oci-patch inspect --no-tags docker://registry.example.com/app:latest
     ],
     "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
 }
+```
+
+### cat
+
+```
+oci-patch cat [flagy] IMAGE CESTA
+```
+
+Stáhne image a vypíše jeden běžný soubor z filesystemu image na stdout.
+
+Pokud soubor neexistuje, `cat` skončí úspěšně a nevypíše nic. S `--debug` příkaz navíc zaloguje warning, že soubor v image neexistuje.
+
+**Flagy:**
+
+| Flag | Popis |
+|------|-------|
+| `--creds user:pass` | Credentials pro registry |
+| `--override-os linux` | Výběr OS z multi-platform indexu |
+| `--override-arch arm64` | Výběr architektury |
+| `--override-variant v8` | Výběr varianty |
+| `--insecure` / `--src-insecure` | Přeskočí TLS ověření certifikátu zdrojového registry |
+| `--debug` | Zapne podrobný výstup včetně warningu pro chybějící soubor |
+
+**Příklady:**
+
+```bash
+oci-patch cat \
+  --src-insecure \
+  docker://harbor.cetin/tsm/stage/tsm-gateway:2.2-test-latest \
+  /app/resources/git.properties
+
+# Chybějící soubory jsou tiché, pokud nepoužiješ --debug
+oci-patch cat --debug docker://registry.example.com/app:latest /missing/file
+```
+
+### ls
+
+```
+oci-patch ls [flagy] IMAGE CESTA
+```
+
+Vypíše položky pod zadanou cestou v image. Chybějící cesta je defaultně tichá a warning se zobrazí jen s `--debug`.
+
+**Flagy:**
+
+| Flag | Popis |
+|------|-------|
+| `--creds user:pass` | Credentials pro registry |
+| `--override-os linux` | Výběr OS z multi-platform indexu |
+| `--override-arch arm64` | Výběr architektury |
+| `--override-variant v8` | Výběr varianty |
+| `--insecure` / `--src-insecure` | Přeskočí TLS ověření certifikátu zdrojového registry |
+| `--debug` | Zapne podrobný výstup včetně warningu pro chybějící cestu |
+
+**Příklad:**
+
+```bash
+oci-patch ls --src-insecure docker://registry.example.com/app:latest /app/resources
+```
+
+### tree
+
+```
+oci-patch tree [flagy] IMAGE CESTA
+```
+
+Vypíše strom pod zadanou cestou. Chybějící cesta je defaultně tichá a warning se zobrazí jen s `--debug`.
+
+**Flagy:**
+
+| Flag | Popis |
+|------|-------|
+| `--creds user:pass` | Credentials pro registry |
+| `--override-os linux` | Výběr OS z multi-platform indexu |
+| `--override-arch arm64` | Výběr architektury |
+| `--override-variant v8` | Výběr varianty |
+| `--insecure` / `--src-insecure` | Přeskočí TLS ověření certifikátu zdrojového registry |
+| `--debug` | Zapne podrobný výstup včetně warningu pro chybějící cestu |
+
+**Příklad:**
+
+```bash
+oci-patch tree --src-insecure docker://registry.example.com/app:latest /app
 ```
 
 ---
@@ -309,6 +430,8 @@ steps:
   condition:
     if-not-exists: /usr/local/bin/encjson   # volitelné, viz Podmínky
 ```
+
+`src` může obsahovat glob pattern jako `./target/uberjar/*SNAPSHOT.jar`, ale musí odpovídat právě jednomu souboru. Když `dst` končí lomítkem, bere se jako adresář a cílový název souboru se vezme z nalezeného `src`.
 
 **`add-dir`** — Přidá všechny soubory z lokálního adresáře jako novou vrstvu.
 
@@ -382,6 +505,8 @@ steps:
 - action: use-base
   from: alpine-base     # id zdroje definované v sources:
 ```
+
+`use-base` je deklarativní obdoba `FROM alpine-base` uprostřed multi-stage Dockerfile. Do té chvíle recipe pracuje s image předanou na CLI. Po `use-base` se aktuální pracovní image přepne na zvolený zdroj a další kroky zapisují už do něj. Když potřebuješ po přepnutí vzít soubor z původní source image, dej původní image do `sources` jako `ref: "{{.SourceImage}}"` a použij `from: original` u kroků jako `copy-file-from` nebo `shadow`.
 
 **`shadow`** — Zabalí strom souborů do šifrované self-extracting binárky a původní cestu v image nahradí touto bootstrap binárkou. Bez `from:` čte z aktuální pracovní image, s `from:` může číst z jiné pojmenované source image a zapisovat do aktuální image.
 
@@ -521,7 +646,7 @@ Kroky pak mohou kterýkoli z těchto zdrojů používat přes `from: <id>`. Je t
 
 To samé platí i pro `shadow`: můžeš vzít `/app` z původní source image, přepnout se přes `use-base` na jinou base image a do nové image vložit už jen `/app/app.self`.
 
-### `--reduce`
+### `--reduce` a `--reduce-changes`
 
 `--reduce` nedělá jen klasický squash vrstev. Materializuje efektivní finální filesystem po všech recipe krocích do jediné vrstvy, takže cesty odstraněné nebo nahrazené přes whiteout se už do výstupu nepřenášejí.
 
@@ -532,6 +657,23 @@ To je užitečné hlavně se `shadow`, kde finální image může obsahovat jen:
 - minimální bootstrap metadata adresáře `/app`
 
 Výsledná velikost tak bývá blízko původní image plus overhead `app.self`, ne původní `/app` plus `app.self`.
+
+`--reduce-changes` řeší jiný případ: chceš zachovat původní base image vrstvy kvůli cache/reuse, ale nechceš mít mnoho malých vrstev z recipe. Výstup pak obsahuje:
+
+- všechny vrstvy base image
+- jednu novou delta vrstvu s efektivními změnami z recipe
+
+Když recipe nepoužije `use-base`, jako base se bere source image z CLI. Když recipe použije `use-base`, jako base se bere image z posledního `use-base` kroku a delta se počítá vůči ní.
+
+Prakticky:
+
+```bash
+# Jedna výsledná vrstva s celým finálním filesystemem.
+oci-patch copy --recipe app.yml --reduce SOURCE DEST
+
+# Původní/base vrstvy zůstanou, změny z recipe budou v jedné vrstvě navíc.
+oci-patch copy --recipe app.yml --reduce-changes SOURCE DEST
+```
 
 ---
 
