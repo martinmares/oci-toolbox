@@ -3,8 +3,8 @@ package image_test
 import (
 	"testing"
 
-	"github.com/datalite/oci-patch/internal/image"
-	"github.com/datalite/oci-patch/internal/testutil"
+	"github.com/martinmares/oci-patch/internal/image"
+	"github.com/martinmares/oci-patch/internal/testutil"
 )
 
 func TestSetEnv_new(t *testing.T) {

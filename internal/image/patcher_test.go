@@ -14,8 +14,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/datalite/oci-patch/internal/image"
-	"github.com/datalite/oci-patch/internal/testutil"
+	"github.com/martinmares/oci-patch/internal/image"
+	"github.com/martinmares/oci-patch/internal/testutil"
 )
 
 func TestAddFileLayer_basic(t *testing.T) {

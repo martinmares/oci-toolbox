@@ -7,10 +7,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/datalite/oci-patch/internal/logging"
+	"github.com/martinmares/oci-patch/internal/logging"
 )
 
-const version = "0.1.0"
+var (
+	version = "0.1.0"
+	commit  = "unknown"
+	date    = "unknown"
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "oci-patch",

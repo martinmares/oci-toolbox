@@ -8,8 +8,8 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/spf13/cobra"
 
-	"github.com/datalite/oci-patch/internal/image"
-	"github.com/datalite/oci-patch/internal/logging"
+	"github.com/martinmares/oci-patch/internal/image"
+	"github.com/martinmares/oci-patch/internal/logging"
 )
 
 var (

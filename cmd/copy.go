@@ -15,11 +15,11 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/datalite/oci-patch/internal/auth"
-	"github.com/datalite/oci-patch/internal/image"
-	"github.com/datalite/oci-patch/internal/logging"
-	"github.com/datalite/oci-patch/internal/progress"
-	"github.com/datalite/oci-patch/internal/recipe"
+	"github.com/martinmares/oci-patch/internal/auth"
+	"github.com/martinmares/oci-patch/internal/image"
+	"github.com/martinmares/oci-patch/internal/logging"
+	"github.com/martinmares/oci-patch/internal/progress"
+	"github.com/martinmares/oci-patch/internal/recipe"
 )
 
 var (

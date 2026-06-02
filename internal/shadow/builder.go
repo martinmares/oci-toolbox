@@ -27,7 +27,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/datalite/oci-patch/internal/image"
+	"github.com/martinmares/oci-patch/internal/image"
 )
 
 const (

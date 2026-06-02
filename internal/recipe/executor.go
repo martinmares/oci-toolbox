@@ -7,9 +7,9 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
-	"github.com/datalite/oci-patch/internal/auth"
-	"github.com/datalite/oci-patch/internal/image"
-	"github.com/datalite/oci-patch/internal/shadow"
+	"github.com/martinmares/oci-patch/internal/auth"
+	"github.com/martinmares/oci-patch/internal/image"
+	"github.com/martinmares/oci-patch/internal/shadow"
 )
 
 // Context holds named image sources resolved before execution.

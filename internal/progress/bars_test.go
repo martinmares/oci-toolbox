@@ -25,3 +25,15 @@ func TestLabelWidthIsBounded(t *testing.T) {
 		t.Fatalf("labelWidth = %d, want %d", got, maxLabelWidth)
 	}
 }
+
+func TestFormatLaneIncludesProgressbarTiming(t *testing.T) {
+	ui := newUI("pull: src", "push: dst", 2)
+	ui.update(updateMsg{lane: 0, complete: 20, total: 100})
+
+	line := ui.formatLane(0)
+	for _, want := range []string{"pull: src", "20%", "[", ":"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("progress line = %q, want substring %q", line, want)
+		}
+	}
+}

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/datalite/oci-patch/cmd"
+import "github.com/martinmares/oci-patch/cmd"
 
 func main() {
 	cmd.Execute()

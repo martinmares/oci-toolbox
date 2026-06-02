@@ -12,7 +12,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
-	"github.com/datalite/oci-patch/internal/image"
+	"github.com/martinmares/oci-patch/internal/image"
 )
 
 const (

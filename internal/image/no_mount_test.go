@@ -11,7 +11,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/partial"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
-	"github.com/datalite/oci-patch/internal/testutil"
+	"github.com/martinmares/oci-patch/internal/testutil"
 )
 
 func TestWithoutMountReuseStripsMountableLayers(t *testing.T) {

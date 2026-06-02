@@ -112,7 +112,7 @@ skopeo --version
 ## Instalace
 
 ```bash
-git clone https://github.com/datalite/oci-patch
+git clone https://github.com/martinmares/oci-patch
 cd oci-patch
 go build -o oci-patch .
 ```
@@ -852,6 +852,6 @@ go test ./...
 Testy jsou plně offline — nevyžadují přístup k žádnému registry. Používají in-memory OCI image sestavené z tar vrstev.
 
 ```
-ok  github.com/datalite/oci-patch/internal/image    (17 testů)
-ok  github.com/datalite/oci-patch/internal/recipe   (11 testů)
+ok  github.com/martinmares/oci-patch/internal/image    (17 testů)
+ok  github.com/martinmares/oci-patch/internal/recipe   (11 testů)
 ```

@@ -1,4 +1,4 @@
-module github.com/datalite/oci-patch
+module github.com/martinmares/oci-patch
 
 go 1.26.2
 
@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/log v0.4.2
 	github.com/google/go-containerregistry v0.21.5
 	github.com/mattn/go-isatty v0.0.20
+	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -37,6 +38,7 @@ require (
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
+	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/moby/api v1.54.1 // indirect
@@ -57,4 +59,5 @@ require (
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/term v0.28.0 // indirect
 )

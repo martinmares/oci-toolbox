@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mattn/go-isatty"
+	"github.com/schollz/progressbar/v3"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
@@ -43,6 +44,7 @@ type UI struct {
 	interactive bool
 	labels      [2]string
 	lane        [2]laneState
+	bars        [2]*progressbar.ProgressBar
 	status      string
 	numBars     int
 	rendered    int
@@ -71,8 +73,25 @@ func newUI(srcLabel, dstLabel string, numBars int) *UI {
 		out:         out,
 		interactive: interactive,
 		labels:      [2]string{srcLabel, dstLabel},
+		bars:        [2]*progressbar.ProgressBar{newLaneBar(srcLabel), newLaneBar(dstLabel)},
 		numBars:     numBars,
 	}
+}
+
+func newLaneBar(label string) *progressbar.ProgressBar {
+	bar := progressbar.NewOptions64(
+		1,
+		progressbar.OptionSetDescription(label),
+		progressbar.OptionSetWriter(io.Discard),
+		progressbar.OptionSetWidth(defaultBarWidth),
+		progressbar.OptionSetTheme(progressbar.ThemeASCII),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionShowTotalBytes(true),
+		progressbar.OptionSetPredictTime(true),
+		progressbar.OptionSetRenderBlankState(true),
+	)
+	_ = bar.RenderBlank()
+	return bar
 }
 
 // Run is kept for API compatibility; rendering happens on updates.
@@ -127,6 +146,7 @@ func (u *UI) update(msg updateMsg) {
 	if msg.err != nil {
 		state.err = msg.err
 	}
+	u.syncBarLocked(msg.lane)
 	u.renderLocked()
 }
 
@@ -138,7 +158,29 @@ func (u *UI) finishLane(lane int) {
 	state.done = true
 	state.complete = state.total
 	state.percent = 1.0
+	u.syncBarLocked(lane)
 	u.renderLocked()
+}
+
+func (u *UI) syncBarLocked(lane int) {
+	bar := u.bars[lane]
+	if bar == nil {
+		return
+	}
+	state := u.lane[lane]
+	if state.total > 0 && bar.GetMax64() != state.total {
+		bar.ChangeMax64(state.total)
+	}
+	switch {
+	case state.err != nil:
+		_ = bar.Exit()
+	case state.done && state.total > 0:
+		_ = bar.Finish()
+	case state.complete > 0:
+		_ = bar.Set64(state.complete)
+	default:
+		_ = bar.RenderBlank()
+	}
 }
 
 func (u *UI) renderLocked() {
@@ -186,17 +228,18 @@ func (u *UI) snapshotLinesLocked() []string {
 func (u *UI) formatLane(i int) string {
 	state := u.lane[i]
 	label := truncateMiddle(u.labels[i], u.labelWidth())
-	barWidth := u.barWidth()
-	bar := renderBar(state.percent, barWidth)
+	barText := strings.TrimSpace(u.bars[i].String())
+	if barText == "" {
+		barText = fmt.Sprintf("%-*s %s %s / %s", u.labelWidth(), label, renderBar(state.percent, u.barWidth()), fmtBytes(state.complete), fmtBytes(state.total))
+	}
 
-	prefix := fmt.Sprintf("%-*s ", u.labelWidth(), label)
 	switch {
 	case state.err != nil:
-		return fmt.Sprintf("%s%s ERROR: %s", prefix, bar, state.err.Error())
-	case state.done:
-		return fmt.Sprintf("%s%s ✓ %s", prefix, bar, fmtBytes(state.complete))
+		return fmt.Sprintf("%s ERROR: %s", barText, state.err.Error())
+	case state.done && state.total == 0:
+		return fmt.Sprintf("%s ✓ %s", barText, fmtBytes(state.complete))
 	default:
-		return fmt.Sprintf("%s%s %s / %s", prefix, bar, fmtBytes(state.complete), fmtBytes(state.total))
+		return barText
 	}
 }
 

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/datalite/oci-patch/internal/testutil"
+	"github.com/martinmares/oci-patch/internal/testutil"
 )
 
 func TestCatImageFileWritesFile(t *testing.T) {

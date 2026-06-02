@@ -7,9 +7,9 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
-	"github.com/datalite/oci-patch/internal/image"
-	"github.com/datalite/oci-patch/internal/recipe"
-	"github.com/datalite/oci-patch/internal/testutil"
+	"github.com/martinmares/oci-patch/internal/image"
+	"github.com/martinmares/oci-patch/internal/recipe"
+	"github.com/martinmares/oci-patch/internal/testutil"
 )
 
 // writeRecipe writes a YAML string to a temp file and returns its path.
