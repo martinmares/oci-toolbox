@@ -35,6 +35,7 @@ type laneState struct {
 	percent  float64
 	done     bool
 	err      error
+	seen     bool
 }
 
 // UI manages the progress display.
@@ -138,6 +139,7 @@ func (u *UI) update(msg updateMsg) {
 	state := &u.lane[msg.lane]
 	state.complete = msg.complete
 	state.total = msg.total
+	state.seen = true
 	if msg.total > 0 {
 		state.percent = float64(msg.complete) / float64(msg.total)
 	} else {
@@ -228,6 +230,11 @@ func (u *UI) snapshotLinesLocked() []string {
 func (u *UI) formatLane(i int) string {
 	state := u.lane[i]
 	label := truncateMiddle(u.labels[i], u.labelWidth())
+
+	if state.done && !state.seen {
+		return fmt.Sprintf("%-*s ✓ no bytes transferred", u.labelWidth(), label)
+	}
+
 	barText := strings.TrimSpace(u.bars[i].String())
 	if barText == "" {
 		barText = fmt.Sprintf("%-*s %s %s / %s", u.labelWidth(), label, renderBar(state.percent, u.barWidth()), fmtBytes(state.complete), fmtBytes(state.total))

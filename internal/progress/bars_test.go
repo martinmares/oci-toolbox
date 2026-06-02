@@ -37,3 +37,16 @@ func TestFormatLaneIncludesProgressbarTiming(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatLaneShowsNoBytesTransferredForEmptyCompletedLane(t *testing.T) {
+	ui := newUI("pull: src", "push: dst", 2)
+	ui.finishLane(1)
+
+	line := ui.formatLane(1)
+	if strings.Contains(line, "0%") {
+		t.Fatalf("progress line = %q, should not show stale 0%% bar", line)
+	}
+	if !strings.Contains(line, "push: dst") || !strings.Contains(line, "no bytes transferred") {
+		t.Fatalf("progress line = %q, want no-bytes-transferred message", line)
+	}
+}
