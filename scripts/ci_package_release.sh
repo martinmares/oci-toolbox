@@ -23,6 +23,8 @@ targets=(
   "linux/arm64"
   "darwin/arm64"
   "darwin/amd64"
+  "windows/amd64"
+  "windows/arm64"
 )
 
 for target in "${targets[@]}"; do
@@ -31,6 +33,10 @@ for target in "${targets[@]}"; do
 
   archive_base="${package}-${version}-${os}-${arch}"
   work_dir="${release_dir}/${archive_base}"
+  output_name="${binary}"
+  if [[ "${os}" == "windows" ]]; then
+    output_name="${binary}.exe"
+  fi
   mkdir -p "${work_dir}"
 
   echo "Building ${archive_base}"
@@ -38,7 +44,7 @@ for target in "${targets[@]}"; do
   CGO_ENABLED=0 \
   GOOS="${os}" \
   GOARCH="${arch}" \
-  go build -trimpath -ldflags "${ldflags}" -o "${work_dir}/${binary}" .
+  go build -trimpath -ldflags "${ldflags}" -o "${work_dir}/${output_name}" .
 
   cp README.md README.cs.md "${work_dir}/"
   tar -C "${release_dir}" -czf "${release_dir}/${archive_base}.tar.gz" "${archive_base}"
