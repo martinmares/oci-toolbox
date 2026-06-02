@@ -1,0 +1,89 @@
+stages:
+  - prepare
+  - verify
+  - build
+  - release
+
+default:
+  image: golang:1.26-bookworm
+
+variables:
+  GIT_DEPTH: "0"
+  GOFLAGS: "-mod=readonly"
+  GOCACHE: "$CI_PROJECT_DIR/.tmp/go-build-cache"
+  GOMODCACHE: "$CI_PROJECT_DIR/.tmp/go/pkg/mod"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .tmp/go-build-cache/
+    - .tmp/go/pkg/mod/
+
+before_script:
+  - mkdir -p .tmp/go-build-cache .tmp/go/pkg/mod
+
+check:
+  stage: verify
+  script:
+    - go build ./...
+    - cd internal/shadow/extractor && go build -o "$CI_PROJECT_DIR/.tmp/extractor-check" .
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+test:
+  stage: verify
+  script:
+    - go test ./...
+    - cd internal/shadow/extractor && go test .
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+release_notes:
+  stage: prepare
+  script:
+    - bash scripts/ci_release_notes.sh
+  artifacts:
+    reports:
+      dotenv: dist/release.env
+    paths:
+      - dist/release_notes.md
+      - dist/CHANGELOG.generated.md
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - VERSION
+
+release_binaries:
+  stage: build
+  timeout: 1h
+  needs:
+    - job: release_notes
+      artifacts: true
+  script:
+    - bash scripts/ci_package_release.sh
+  artifacts:
+    paths:
+      - dist/release/*.tar.gz
+      - dist/release/SHA256SUMS
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - VERSION
+
+publish_release:
+  stage: release
+  needs:
+    - job: release_notes
+      artifacts: true
+    - job: release_binaries
+      artifacts: true
+  script:
+    - bash scripts/ci_publish_release.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - VERSION
