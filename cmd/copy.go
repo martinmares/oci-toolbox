@@ -36,6 +36,7 @@ var (
 	continueOnError  bool
 	srcInsecure      bool
 	destInsecure     bool
+	destTags         []string
 )
 
 var copyCmd = &cobra.Command{
@@ -63,6 +64,7 @@ func init() {
 	copyCmd.Flags().BoolVar(&continueOnError, "continue-on-error", false, "continue batch processing after a copy fails")
 	copyCmd.Flags().BoolVar(&srcInsecure, "src-insecure", false, "skip TLS certificate verification for source registry")
 	copyCmd.Flags().BoolVar(&destInsecure, "dest-insecure", false, "skip TLS certificate verification for destination registry")
+	copyCmd.Flags().StringArrayVar(&destTags, "dest-tag", nil, "additional destination tag in the same repository (may be specified multiple times)")
 
 	// Legacy --from/--to flags (hidden, for oci-patch native style)
 	copyCmd.Flags().StringVar(&fromRef, "from", "", "source image reference")
@@ -122,6 +124,9 @@ func runCopy(_ *cobra.Command, args []string) error {
 	}
 
 	if batchFile != "" {
+		if len(destTags) > 0 {
+			return fmt.Errorf("--dest-tag cannot be combined with --batch-file")
+		}
 		batch, err := loadCopyBatch(batchFile)
 		if err != nil {
 			return err
@@ -133,7 +138,7 @@ func runCopy(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("source and destination are required (provide as positional arguments or --from/--to)")
 	}
 
-	return runCopyOne(src, dst, "")
+	return runCopyOne(src, dst, "", destTags)
 }
 
 type copyBatch struct {
@@ -215,7 +220,7 @@ func runCopyBatch(batch []copyBatchItem) error {
 		if !showProgress {
 			slog.Info("running batch copy", "job", label, "source", item.source(), "destination", item.target())
 		}
-		if err := runCopyOne(item.source(), item.target(), label); err != nil {
+		if err := runCopyOne(item.source(), item.target(), label, nil); err != nil {
 			failures = append(failures, copyBatchFailure{Index: i + 1, Item: item, Err: err})
 			if !continueOnError {
 				return fmt.Errorf("%s failed: %w", label, err)
@@ -245,7 +250,7 @@ func (i copyBatchItem) target() string {
 	return i.Destination
 }
 
-func runCopyOne(src, dst, batchLabel string) error {
+func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error {
 	srcOpts := auth.RemoteOptions(parseCreds(srcCreds))
 	dstOpts := auth.RemoteOptions(parseCreds(destCreds))
 	if srcInsecure {
@@ -259,6 +264,9 @@ func runCopyOne(src, dst, batchLabel string) error {
 	srcIsDaemon := isDaemonRef(src)
 	dstIsDaemon := isDaemonRef(dst)
 	isFileDst := strings.HasPrefix(dst, "file://")
+	if len(additionalDestTags) > 0 && (isFileDst || dstIsDaemon) {
+		return fmt.Errorf("--dest-tag is supported only for registry destinations")
+	}
 	var ui *progress.UI
 	var jsonEmitter *progress.JSONEmitter
 	var srcCh, dstCh chan<- v1.Update
@@ -600,6 +608,16 @@ func runCopyOne(src, dst, batchLabel string) error {
 		return fmt.Errorf("pushing image: %w", err)
 	}
 
+	if len(additionalDestTags) > 0 {
+		if dstCh != nil {
+			close(dstCh)
+			dstCh = nil
+		}
+		if err := tagAdditionalDestTags(dstParsed, img, dstOpts, additionalDestTags, setPhase, jsonEmitter); err != nil {
+			return err
+		}
+	}
+
 	if ui != nil {
 		ui.Wait()
 		printTimings()
@@ -611,6 +629,56 @@ func runCopyOne(src, dst, batchLabel string) error {
 	}
 
 	return nil
+}
+
+func tagAdditionalDestTags(dst name.Reference, img v1.Image, opts []remote.Option, tags []string, setPhase func(string), jsonEmitter *progress.JSONEmitter) error {
+	dstTag, ok := dst.(name.Tag)
+	if !ok {
+		return fmt.Errorf("--dest-tag requires destination reference to be a tag")
+	}
+	digest, err := img.Digest()
+	if err != nil {
+		return fmt.Errorf("computing pushed image digest: %w", err)
+	}
+	desc, err := remote.Get(dstTag.Context().Digest(digest.String()), opts...)
+	if err != nil {
+		return fmt.Errorf("fetching pushed manifest for additional tags: %w", err)
+	}
+	for _, tag := range normalizeAdditionalTags(tags) {
+		target, err := name.NewTag(dstTag.Context().Name()+":"+tag, name.WeakValidation)
+		if err != nil {
+			return fmt.Errorf("invalid additional destination tag %q: %w", tag, err)
+		}
+		setPhase("tagging additional destination " + target.String())
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("tag", target.String())
+		}
+		if err := remote.Tag(target, desc, opts...); err != nil {
+			if jsonEmitter != nil {
+				jsonEmitter.Error("tagging additional destination " + target.String() + ": " + err.Error())
+			}
+			return fmt.Errorf("tagging additional destination %s: %w", target.String(), err)
+		}
+		slog.Info("tagged additional destination", "destination", target.String())
+	}
+	return nil
+}
+
+func normalizeAdditionalTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
 }
 
 // closeProg closes any open progress channels (cleanup on error).

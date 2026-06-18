@@ -145,6 +145,7 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 | `--debug` | Enable verbose output |
 | `--batch-file path/to/images.yml` | Run multiple copy jobs from a YAML file |
 | `--continue-on-error` | Continue batch processing after a copy fails |
+| `--dest-tag tag` | Add an extra destination tag in the same repository without copying layers again (repeatable) |
 | `--dest-no-reuse` | Disable cross-repository blob mount/reuse at destination (retry fallback) |
 | `--reduce` | Materialize the final filesystem into a single minimal layer |
 | `--reduce-changes` | Preserve base layers and reduce recipe changes into one delta layer |
@@ -161,6 +162,14 @@ oci-patch copy docker://registry.example.com/app:1.0 docker://registry.example.c
 oci-patch copy \
   --src-creds srcuser:srcpass \
   --dest-creds dstuser:dstpass \
+  docker://src.registry.com/app:2.3-latest \
+  docker://dst.registry.com/app:2026.04.17.01
+
+# Copy once and publish additional destination tags for the same manifest
+oci-patch copy \
+  --dest-creds dstuser:dstpass \
+  --dest-tag latest \
+  --dest-tag stable \
   docker://src.registry.com/app:2.3-latest \
   docker://dst.registry.com/app:2026.04.17.01
 

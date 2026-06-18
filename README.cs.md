@@ -145,6 +145,7 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 | `--debug` | Zapne podrobný výstup |
 | `--batch-file cesta/k/images.yml` | Spustí více copy jobů ze YAML souboru |
 | `--continue-on-error` | V batch režimu pokračuje další položkou po selhání |
+| `--dest-tag tag` | Přidá další cílový tag ve stejném repository bez opakovaného kopírování vrstev (lze opakovat) |
 | `--dest-no-reuse` | Zakáže cross-repository blob mount/reuse v cíli (fallback při problémech) |
 | `--reduce` | Materializuje finální filesystem do jediné minimální vrstvy |
 | `--reduce-changes` | Zachová base vrstvy a změny z recipe sloučí do jedné delta vrstvy |
@@ -161,6 +162,14 @@ oci-patch copy docker://registry.example.com/app:1.0 docker://registry.example.c
 oci-patch copy \
   --src-creds srcuser:srcpass \
   --dest-creds dstuser:dstpass \
+  docker://src.registry.com/app:2.3-latest \
+  docker://dst.registry.com/app:2026.04.17.01
+
+# Jedna kopie a další cílové tagy pro stejný manifest
+oci-patch copy \
+  --dest-creds dstuser:dstpass \
+  --dest-tag latest \
+  --dest-tag stable \
   docker://src.registry.com/app:2.3-latest \
   docker://dst.registry.com/app:2026.04.17.01
 
