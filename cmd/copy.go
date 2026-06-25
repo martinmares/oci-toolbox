@@ -486,7 +486,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 
 	// signal source bar done after pull+recipe phase
 	if srcCh != nil && !dstIsDaemon {
-		close(srcCh)
+		safeClose(srcCh)
 		srcCh = nil
 	}
 
@@ -556,7 +556,8 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 			return fmt.Errorf("writing tarball: %w", err)
 		}
 		if dstCh != nil {
-			close(dstCh)
+			safeClose(dstCh)
+			dstCh = nil
 		}
 		if ui != nil {
 			ui.Wait()
@@ -594,7 +595,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 			return fmt.Errorf("loading image into docker daemon: %w", err)
 		}
 		if srcCh != nil {
-			close(srcCh)
+			safeClose(srcCh)
 			srcCh = nil
 		}
 		if ui != nil {
@@ -643,7 +644,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 
 	if len(additionalDestTags) > 0 {
 		if dstCh != nil {
-			close(dstCh)
+			safeClose(dstCh)
 			dstCh = nil
 		}
 		if err := tagAdditionalDestTags(dstParsed, img, dstOpts, additionalDestTags, setPhase, jsonEmitter); err != nil {
@@ -717,11 +718,18 @@ func normalizeAdditionalTags(tags []string) []string {
 // closeProg closes any open progress channels (cleanup on error).
 func closeProg(srcCh, dstCh chan<- v1.Update) {
 	if srcCh != nil {
-		close(srcCh)
+		safeClose(srcCh)
 	}
 	if dstCh != nil {
-		close(dstCh)
+		safeClose(dstCh)
 	}
+}
+
+func safeClose(ch chan<- v1.Update) {
+	defer func() {
+		_ = recover()
+	}()
+	close(ch)
 }
 
 // shortRef returns a short human-readable label from a docker:// reference.

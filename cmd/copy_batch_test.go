@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 func TestLoadCopyBatch(t *testing.T) {
@@ -139,6 +141,12 @@ copy:
 	if err == nil || !strings.Contains(err.Error(), "both src and source") {
 		t.Fatalf("loadCopyBatch error = %v, want conflicting alias error", err)
 	}
+}
+
+func TestSafeCloseToleratesClosedChannel(t *testing.T) {
+	ch := make(chan v1.Update)
+	close(ch)
+	safeClose(ch)
 }
 
 func writeBatchFile(t *testing.T, data string) string {
