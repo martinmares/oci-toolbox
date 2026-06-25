@@ -146,10 +146,11 @@ type copyBatch struct {
 }
 
 type copyBatchItem struct {
-	Src         string `yaml:"src"`
-	Source      string `yaml:"source"`
-	Dest        string `yaml:"dest"`
-	Destination string `yaml:"destination"`
+	Src         string   `yaml:"src"`
+	Source      string   `yaml:"source"`
+	Dest        string   `yaml:"dest"`
+	Destination string   `yaml:"destination"`
+	DestTags    []string `yaml:"dest_tags"`
 }
 
 type copyBatchFailure struct {
@@ -204,10 +205,16 @@ func loadCopyBatch(path string) ([]copyBatchItem, error) {
 		if item.Dest != "" && item.Destination != "" && item.Dest != item.Destination {
 			return nil, fmt.Errorf("batch file %q copy[%d] has both dest and destination with different values", path, i)
 		}
-		if prev, ok := seenDest[item.target()]; ok {
-			return nil, fmt.Errorf("batch file %q copy[%d] duplicates destination from copy[%d]: %s", path, i, prev, item.target())
+		destinations, err := item.destinations()
+		if err != nil {
+			return nil, fmt.Errorf("batch file %q copy[%d]: %w", path, i, err)
 		}
-		seenDest[item.target()] = i
+		for _, destination := range destinations {
+			if prev, ok := seenDest[destination]; ok {
+				return nil, fmt.Errorf("batch file %q copy[%d] duplicates destination from copy[%d]: %s", path, i, prev, destination)
+			}
+			seenDest[destination] = i
+		}
 	}
 
 	return batch.Copy, nil
@@ -220,7 +227,7 @@ func runCopyBatch(batch []copyBatchItem) error {
 		if !showProgress {
 			slog.Info("running batch copy", "job", label, "source", item.source(), "destination", item.target())
 		}
-		if err := runCopyOne(item.source(), item.target(), label, nil); err != nil {
+		if err := runCopyOne(item.source(), item.target(), label, item.DestTags); err != nil {
 			failures = append(failures, copyBatchFailure{Index: i + 1, Item: item, Err: err})
 			if !continueOnError {
 				return fmt.Errorf("%s failed: %w", label, err)
@@ -248,6 +255,32 @@ func (i copyBatchItem) target() string {
 		return i.Dest
 	}
 	return i.Destination
+}
+
+func (i *copyBatchItem) destinations() ([]string, error) {
+	target := i.target()
+	destinations := []string{target}
+	if len(i.DestTags) == 0 {
+		return destinations, nil
+	}
+	targetTag, err := name.NewTag(stripScheme(target), name.WeakValidation)
+	if err != nil {
+		return nil, fmt.Errorf("invalid dest reference for dest_tags: %w", err)
+	}
+	destinations[0] = targetTag.String()
+	for index, tag := range i.DestTags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			return nil, fmt.Errorf("dest_tags[%d] is empty", index)
+		}
+		parsedTag, err := name.NewTag(targetTag.Context().Name()+":"+tag, name.WeakValidation)
+		if err != nil {
+			return nil, fmt.Errorf("invalid dest_tags[%d] %q: %w", index, tag, err)
+		}
+		i.DestTags[index] = tag
+		destinations = append(destinations, parsedTag.String())
+	}
+	return destinations, nil
 }
 
 func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error {

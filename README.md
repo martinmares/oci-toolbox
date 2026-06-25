@@ -213,6 +213,9 @@ Use `--batch-file` when you need to copy multiple images with the same CLI optio
 copy:
   - src: harbor.cetin/tsm/release/tsm-config:TSM-Core_RE60_BF01_01.01
     dest: harbor.cetin/tsm/release/tsm-config:2.2-test-latest
+    dest_tags:
+      - latest
+      - stable
   - src: harbor.cetin/tsm/release/tsm-ticket:TSM-Core_RE60_BF01_01.01
     dest: harbor.cetin/tsm/release/tsm-ticket:2.2-test-latest
 ```
@@ -227,7 +230,7 @@ oci-patch copy \
 
 Batch jobs run sequentially. Without `--continue-on-error`, the first failed copy stops the batch. With `--continue-on-error`, later entries still run, but the command returns a non-zero exit code at the end if any entry failed and prints a failure summary.
 
-The primary batch keys are `src` and `dest`, matching the `--src-*` and `--dest-*` CLI flags. `source` and `destination` are also accepted as aliases. Duplicate destination images are rejected during validation.
+The primary batch keys are `src` and `dest`, matching the `--src-*` and `--dest-*` CLI flags. `source` and `destination` are also accepted as aliases. `dest_tags` adds extra tags in the same destination repository after the image is copied once, equivalent to repeating `--dest-tag` for a single copy command. Duplicate destination images are rejected during validation.
 
 ### inspect
 

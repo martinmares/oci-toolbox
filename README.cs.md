@@ -213,6 +213,9 @@ Pro opakované kopírování více image můžeš použít `--batch-file`. Stejn
 copy:
   - src: harbor.cetin/tsm/release/tsm-config:TSM-Core_RE60_BF01_01.01
     dest: harbor.cetin/tsm/release/tsm-config:2.2-test-latest
+    dest_tags:
+      - latest
+      - stable
   - src: harbor.cetin/tsm/release/tsm-ticket:TSM-Core_RE60_BF01_01.01
     dest: harbor.cetin/tsm/release/tsm-ticket:2.2-test-latest
 ```
@@ -227,7 +230,7 @@ oci-patch copy \
 
 Batch běží sériově. Bez `--continue-on-error` se zastaví na první chybě. S `--continue-on-error` pokračuje dalšími položkami, ale pokud aspoň jedna položka selže, příkaz na konci vrátí nenulový exit code a vypíše souhrn selhání.
 
-Primární klíče v batch souboru jsou `src` a `dest`, stejně jako CLI flagy `--src-*` a `--dest-*`. Jako aliasy jsou podporované i `source` a `destination`. Duplicitní cílové image jsou odmítnuté při validaci souboru.
+Primární klíče v batch souboru jsou `src` a `dest`, stejně jako CLI flagy `--src-*` a `--dest-*`. Jako aliasy jsou podporované i `source` a `destination`. `dest_tags` přidá další tagy ve stejném cílovém repository po jednom zkopírování image, stejně jako opakované `--dest-tag` u jednoho CLI příkazu. Duplicitní cílové image jsou odmítnuté při validaci souboru.
 
 ### inspect
 

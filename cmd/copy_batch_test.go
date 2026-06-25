@@ -47,6 +47,25 @@ copy:
 	}
 }
 
+func TestLoadCopyBatchAcceptsDestTags(t *testing.T) {
+	path := writeBatchFile(t, `
+copy:
+  - src: harbor.cetin/tsm/release/tsm-config:old
+    dest: harbor.cetin/tsm/release/tsm-config:new
+    dest_tags:
+      - latest
+      - stable
+`)
+
+	items, err := loadCopyBatch(path)
+	if err != nil {
+		t.Fatalf("loadCopyBatch: %v", err)
+	}
+	if got := strings.Join(items[0].DestTags, ","); got != "latest,stable" {
+		t.Fatalf("DestTags = %q, want latest,stable", got)
+	}
+}
+
 func TestLoadCopyBatchRejectsDuplicateDestination(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
@@ -59,6 +78,38 @@ copy:
 	_, err := loadCopyBatch(path)
 	if err == nil || !strings.Contains(err.Error(), "duplicates destination") {
 		t.Fatalf("loadCopyBatch error = %v, want duplicate destination error", err)
+	}
+}
+
+func TestLoadCopyBatchRejectsDuplicateDestinationFromDestTags(t *testing.T) {
+	path := writeBatchFile(t, `
+copy:
+  - src: harbor.cetin/tsm/release/tsm-config:old
+    dest: harbor.cetin/tsm/release/tsm-config:new
+    dest_tags:
+      - latest
+  - src: harbor.cetin/tsm/release/tsm-ticket:old
+    dest: harbor.cetin/tsm/release/tsm-config:latest
+`)
+
+	_, err := loadCopyBatch(path)
+	if err == nil || !strings.Contains(err.Error(), "duplicates destination") {
+		t.Fatalf("loadCopyBatch error = %v, want duplicate destination error", err)
+	}
+}
+
+func TestLoadCopyBatchRejectsEmptyDestTag(t *testing.T) {
+	path := writeBatchFile(t, `
+copy:
+  - src: harbor.cetin/tsm/release/tsm-config:old
+    dest: harbor.cetin/tsm/release/tsm-config:new
+    dest_tags:
+      - ""
+`)
+
+	_, err := loadCopyBatch(path)
+	if err == nil || !strings.Contains(err.Error(), "dest_tags[0] is empty") {
+		t.Fatalf("loadCopyBatch error = %v, want empty dest_tags error", err)
 	}
 }
 
