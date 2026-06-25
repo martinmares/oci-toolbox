@@ -10,8 +10,10 @@ import (
 	"github.com/martinmares/oci-patch/internal/logging"
 )
 
+const defaultVersion = "0.1.0"
+
 var (
-	version = "0.1.0"
+	version = defaultVersion
 	commit  = "unknown"
 	date    = "unknown"
 )
@@ -24,6 +26,14 @@ to modify the image in-flight — without requiring a Docker daemon.`,
 	// --version flag (skopeo-compatible: prints "oci-patch version X.Y.Z")
 	Version:      version,
 	SilenceUsage: true,
+}
+
+func SetVersion(value string) {
+	if value == "" || version != defaultVersion {
+		return
+	}
+	version = value
+	rootCmd.Version = value
 }
 
 func init() {
