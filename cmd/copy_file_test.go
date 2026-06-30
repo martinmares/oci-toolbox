@@ -41,3 +41,18 @@ func TestLoadFileImageRejectsEmptyPath(t *testing.T) {
 		t.Fatal("loadFileImage(file://) succeeded, want error")
 	}
 }
+
+func TestFileDestinationDoesNotEagerPull(t *testing.T) {
+	if shouldEagerPull(true, true, false) {
+		t.Fatal("file destination with progress would eagerly pull layers")
+	}
+	if shouldEagerPull(true, false, true) {
+		t.Fatal("file destination with JSON progress would eagerly pull layers")
+	}
+	if shouldEagerPull(true, false, false) {
+		t.Fatal("file destination without progress would eagerly pull layers")
+	}
+	if !shouldEagerPull(false, true, false) {
+		t.Fatal("registry destination no longer eagerly pulls for pull progress")
+	}
+}

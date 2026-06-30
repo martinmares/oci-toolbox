@@ -327,19 +327,19 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 		switch {
 		case isFileDst:
 			filePath := strings.TrimPrefix(dst, "file://")
-			ui = progress.New("pull: "+srcLabel, "save: "+filePath)
+			ui = progress.NewSingle("download+save: " + filePath)
+			dstCh = ui.SrcChannel()
 		case dstIsDaemon:
 			ui = progress.NewSingle("pull: " + srcLabel)
+			srcCh = ui.SrcChannel()
 		default:
 			dstLabel := shortRef(dst)
 			ui = progress.New("pull: "+srcLabel, "push: "+dstLabel)
-		}
-		ui.Run()
-		srcCh = ui.SrcChannel()
-		if !dstIsDaemon {
+			srcCh = ui.SrcChannel()
 			dstCh = ui.DstChannel()
 		}
-		if !srcIsDaemon && !srcIsFile {
+		ui.Run()
+		if srcCh != nil && !srcIsDaemon && !srcIsFile {
 			srcOpts = append(srcOpts, remote.WithProgress(srcCh))
 		}
 	} else if showProgressJSON {
@@ -436,7 +436,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 
 	// go-containerregistry pull is lazy — remote.WithProgress only fires during push (write.go).
 	// For pull progress we manually stream all layers and report bytes to srcCh ourselves.
-	if showProgress || showProgressJSON || isFileDst {
+	if shouldEagerPull(isFileDst, showProgress, showProgressJSON) {
 		if err := eagerPull(img, srcCh); err != nil {
 			closeProg(srcCh, dstCh)
 			if jsonEmitter != nil {
@@ -777,6 +777,12 @@ func isDaemonRef(ref string) bool {
 
 func isFileRef(ref string) bool {
 	return strings.HasPrefix(ref, "file://")
+}
+
+func shouldEagerPull(isFileDst, progressEnabled, progressJSONEnabled bool) bool {
+	// tarball.WriteToFile streams remote layers while writing the archive.
+	// Reading them eagerly first would cause every layer to be downloaded twice.
+	return !isFileDst && (progressEnabled || progressJSONEnabled)
 }
 
 func loadFileImage(ref string) (v1.Image, error) {
