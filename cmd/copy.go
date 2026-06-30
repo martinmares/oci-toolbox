@@ -41,9 +41,10 @@ var (
 
 var copyCmd = &cobra.Command{
 	Use:   "copy SOURCE DESTINATION | copy --batch-file FILE",
-	Short: "Copy and patch an OCI image between registries",
+	Short: "Copy and patch an OCI image between registries or Docker archives",
 	Args:  copyArgs,
 	Example: `  oci-patch copy docker://registry.example.com/app:latest docker://registry.example.com/app:patched
+  oci-patch copy file://app.tgz docker://registry.example.com/app:restored
   oci-patch copy --src-creds user:pass --dest-creds user:pass docker://src/repo:tag docker://dst/repo:tag
   oci-patch copy --progress --recipe inject-tool.yml docker://src/repo:tag docker://dst/repo:tag
   oci-patch copy --batch-file images.yml --src-insecure --dest-insecure`,
@@ -295,6 +296,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 
 	// --- setup progress UI ---
 	srcIsDaemon := isDaemonRef(src)
+	srcIsFile := isFileRef(src)
 	dstIsDaemon := isDaemonRef(dst)
 	isFileDst := strings.HasPrefix(dst, "file://")
 	if len(additionalDestTags) > 0 && (isFileDst || dstIsDaemon) {
@@ -337,7 +339,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 		if !dstIsDaemon {
 			dstCh = ui.DstChannel()
 		}
-		if !srcIsDaemon {
+		if !srcIsDaemon && !srcIsFile {
 			srcOpts = append(srcOpts, remote.WithProgress(srcCh))
 		}
 	} else if showProgressJSON {
@@ -362,7 +364,25 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 		srcLabel string
 		err      error
 	)
-	if srcIsDaemon {
+	if srcIsFile {
+		filePath := strings.TrimPrefix(src, "file://")
+		srcLabel = filePath
+		if debugMode {
+			slog.Debug("loading source image from Docker archive", "path", filePath)
+		}
+		setPhase("loading source image from Docker archive")
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("pull", filePath)
+		}
+		img, err = loadFileImage(src)
+		if err != nil {
+			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("loading source image from Docker archive: " + err.Error())
+			}
+			return err
+		}
+	} else if srcIsDaemon {
 		srcTag, err := parseDaemonTag(src)
 		if err != nil {
 			closeProg(srcCh, dstCh)
@@ -753,6 +773,22 @@ func stripScheme(ref string) string {
 
 func isDaemonRef(ref string) bool {
 	return strings.HasPrefix(ref, "docker-daemon://") || strings.HasPrefix(ref, "daemon://")
+}
+
+func isFileRef(ref string) bool {
+	return strings.HasPrefix(ref, "file://")
+}
+
+func loadFileImage(ref string) (v1.Image, error) {
+	path := strings.TrimPrefix(ref, "file://")
+	if path == "" || path == ref {
+		return nil, fmt.Errorf("invalid file source reference %q", ref)
+	}
+	img, err := tarball.ImageFromPath(path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("loading image from Docker archive %q: %w", path, err)
+	}
+	return img, nil
 }
 
 func parseDaemonTag(ref string) (name.Tag, error) {
