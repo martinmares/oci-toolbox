@@ -10,6 +10,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/term"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
@@ -40,18 +41,19 @@ type laneState struct {
 
 // UI manages the progress display.
 type UI struct {
-	mu          sync.Mutex
-	out         *os.File
-	interactive bool
-	labels      [2]string
-	lane        [2]laneState
-	bars        [2]*progressbar.ProgressBar
-	status      string
-	numBars     int
-	rendered    int
-	closed      bool
-	lastStatus  string
-	wg          sync.WaitGroup
+	mu            sync.Mutex
+	out           *os.File
+	interactive   bool
+	terminalWidth int
+	labels        [2]string
+	lane          [2]laneState
+	bars          [2]*progressbar.ProgressBar
+	status        string
+	numBars       int
+	rendered      int
+	closed        bool
+	lastStatus    string
+	wg            sync.WaitGroup
 }
 
 // New creates a two-bar progress UI (pull + push).
@@ -70,16 +72,24 @@ func newUI(srcLabel, dstLabel string, numBars int) *UI {
 	if out != nil {
 		interactive = isatty.IsTerminal(out.Fd()) || isatty.IsCygwinTerminal(out.Fd())
 	}
+	terminalWidth := 0
+	if interactive {
+		if width, _, err := term.GetSize(int(out.Fd())); err == nil {
+			terminalWidth = width
+		}
+	}
 	return &UI{
-		out:         out,
-		interactive: interactive,
-		labels:      [2]string{srcLabel, dstLabel},
-		bars:        [2]*progressbar.ProgressBar{newLaneBar(srcLabel), newLaneBar(dstLabel)},
-		numBars:     numBars,
+		out:           out,
+		interactive:   interactive,
+		terminalWidth: terminalWidth,
+		labels:        [2]string{srcLabel, dstLabel},
+		bars:          [2]*progressbar.ProgressBar{newLaneBar(srcLabel), newLaneBar(dstLabel)},
+		numBars:       numBars,
 	}
 }
 
 func newLaneBar(label string) *progressbar.ProgressBar {
+	label = truncateMiddle(label, maxLabelWidth)
 	bar := progressbar.NewOptions64(
 		1,
 		progressbar.OptionSetDescription(label),
@@ -203,6 +213,7 @@ func (u *UI) renderLocked() {
 		fmt.Fprintf(u.out, "\r\x1b[%dA", u.rendered)
 	}
 	for i, line := range lines {
+		line = fitTerminalLine(line, u.terminalWidth)
 		fmt.Fprint(u.out, "\x1b[2K\r")
 		fmt.Fprint(u.out, line)
 		if i < len(lines)-1 {
@@ -214,6 +225,23 @@ func (u *UI) renderLocked() {
 	}
 	fmt.Fprint(u.out, "\n")
 	u.rendered = len(lines)
+}
+
+func fitTerminalLine(line string, width int) string {
+	// Leave the last terminal column unused. Writing into it can trigger an
+	// automatic wrap, which breaks the cursor-up accounting on the next refresh.
+	if width <= 1 {
+		return line
+	}
+	limit := width - 1
+	runes := []rune(line)
+	if len(runes) <= limit {
+		return line
+	}
+	if limit == 1 {
+		return "…"
+	}
+	return string(runes[:limit-1]) + "…"
 }
 
 func (u *UI) snapshotLinesLocked() []string {

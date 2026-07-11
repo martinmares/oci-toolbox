@@ -16,10 +16,12 @@ import (
 )
 
 const (
-	ansiReset = "\x1b[0m"
-	ansiBlue  = "\x1b[34m"
-	ansiCyan  = "\x1b[36m"
-	ansiGreen = "\x1b[32m"
+	ansiReset  = "\x1b[0m"
+	ansiBold   = "\x1b[1m"
+	ansiBlue   = "\x1b[34m"
+	ansiCyan   = "\x1b[36m"
+	ansiGreen  = "\x1b[32m"
+	ansiYellow = "\x1b[33m"
 )
 
 func isTTYWriter(w io.Writer) bool {

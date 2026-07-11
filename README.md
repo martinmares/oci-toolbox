@@ -17,6 +17,7 @@
   - [cat](#cat)
   - [ls](#ls)
   - [tree](#tree)
+  - [examples](#examples-command)
 - [Credentials](#credentials)
 - [Recipes](#recipes)
   - [Recipe structure](#recipe-structure)
@@ -380,6 +381,23 @@ Prints a tree view of the subtree rooted at the given path. Missing paths are si
 ```bash
 oci-patch tree --src-insecure docker://registry.example.com/app:latest /app
 ```
+
+### examples command
+
+```
+oci-patch examples
+```
+
+Shows a compact command cookbook directly in the terminal: ordinary image copy, batch copy with the complete `images.yml` structure, recipe patching, layer reduction, and image-content inspection.
+
+```bash
+oci-patch examples
+
+# Equivalent Cobra help form:
+oci-patch help examples
+```
+
+When stdout is a terminal, commands, YAML keys, comments, and section headings are colorized. Piping or redirecting the output produces plain text, so this is safe for `oci-patch examples | less` and `oci-patch examples > examples.txt`.
 
 ---
 

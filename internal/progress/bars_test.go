@@ -26,6 +26,23 @@ func TestLabelWidthIsBounded(t *testing.T) {
 	}
 }
 
+func TestProgressbarTruncatesLongLabel(t *testing.T) {
+	label := "download+save: namespace/timestamp/.a-very-long-image-name-that-must-not-wrap.tgz.part"
+	ui := newUI(label, "", 1)
+	ui.update(updateMsg{lane: 0, complete: 20, total: 100})
+	line := ui.formatLane(0)
+	if strings.Contains(line, label) {
+		t.Fatalf("progress line contains unbounded label: %q", line)
+	}
+}
+
+func TestFitTerminalLineAvoidsAutomaticWrap(t *testing.T) {
+	got := fitTerminalLine("1234567890", 8)
+	if len([]rune(got)) != 7 || got != "123456…" {
+		t.Fatalf("fitTerminalLine = %q, want %q", got, "123456…")
+	}
+}
+
 func TestFormatLaneIncludesProgressbarTiming(t *testing.T) {
 	ui := newUI("pull: src", "push: dst", 2)
 	ui.update(updateMsg{lane: 0, complete: 20, total: 100})

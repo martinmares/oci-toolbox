@@ -17,6 +17,7 @@
   - [cat](#cat)
   - [ls](#ls)
   - [tree](#tree)
+  - [Příkaz examples](#příkaz-examples)
 - [Credentials](#credentials)
 - [Recipe](#recipe)
   - [Struktura recipe](#struktura-recipe)
@@ -380,6 +381,23 @@ Vypíše strom pod zadanou cestou. Chybějící cesta je defaultně tichá a war
 ```bash
 oci-patch tree --src-insecure docker://registry.example.com/app:latest /app
 ```
+
+### Příkaz examples
+
+```
+oci-patch examples
+```
+
+Vypíše přímo v terminálu stručnou kuchařku příkazů: běžné kopírování image, batch copy včetně kompletní struktury `images.yml`, patch pomocí recipe, redukci vrstev a prohlížení obsahu image.
+
+```bash
+oci-patch examples
+
+# Ekvivalentní forma přes Cobra help:
+oci-patch help examples
+```
+
+Pokud výstup míří do terminálu, příkazy, YAML klíče, komentáře a nadpisy jsou barevně zvýrazněné. Při pipe nebo přesměrování se vypíše čistý text, takže funguje i `oci-patch examples | less` a `oci-patch examples > examples.txt`.
 
 ---
 
