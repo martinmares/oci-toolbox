@@ -33,22 +33,124 @@ oci-patch copy --batch-file images.yml --src-insecure --dest-insecure`, color)
 	fmt.Fprintln(w)
 	codeBlock(w, `# images.yml
 copy:
-  - src: harbor.cetin/tsm/release/tsm-config:TSM-Core_RE60_BF01_01.01
-    dest: harbor.cetin/tsm/release/tsm-config:2.2-test-latest
-  - src: harbor.cetin/tsm/release/tsm-ticket:TSM-Core_RE60_BF01_01.01
-    dest: harbor.cetin/tsm/release/tsm-ticket:2.2-test-latest`, color)
+  - src: registry.example.com/team/config:release-1.0
+    dest: registry.example.com/team/config:test-latest
+  - src: registry.example.com/team/ticket:release-1.0
+    dest: registry.example.com/team/ticket:test-latest`, color)
 
-	section(w, "Patch with a recipe", color)
-	codeBlock(w, `# Apply app.yml while copying. Keep base-image layers and create one layer for recipe changes.
-oci-patch copy --recipe app.yml --reduce-changes docker://registry.example.com/team/app:1.2 docker://registry.example.com/team/app:patched
-
-# app.yml
+	section(w, "Java application", color)
+	codeBlock(w, `# app.yml: add an application, make /app writable for the runtime user, and set startup metadata.
+name: java-application
 steps:
   - action: add-file
-    src: ./target/app.jar
-    dst: /app/app.jar
+    src: ./target/uberjar/myapp.jar
+    dst: /app/myapp.jar
+    owner: "1001:0"
   - action: fix-permissions
-    path: /app`, color)
+    path: /app
+    owner: "1001:0"
+    mode: g=u
+    setgid-dirs: true
+  - action: set-user
+    value: "1001:1001"
+  - action: set-workdir
+    value: /app
+  - action: set-entrypoint
+    value_list: ["java", "-jar", "/app/myapp.jar"]
+  - action: set-cmd
+    value_list: ["--server.port=8080"]
+  - action: set-env
+    key: JAVA_TOOL_OPTIONS
+    value: "-XX:MaxRAMPercentage=75"
+  - action: set-label
+    key: org.opencontainers.image.title
+    value: myapp
+
+# Keep base-image layers and make all recipe changes one delta layer.
+# src can instead use ./target/uberjar/*SNAPSHOT.jar when it matches exactly one JAR; dst: /app/ then preserves its filename.
+oci-patch copy --recipe app.yml --reduce-changes docker://registry.example.com/team/app:1.2 docker://registry.example.com/team/app:patched`, color)
+
+	section(w, "Replace a tool and configuration", color)
+	codeBlock(w, `# patch-tools.yml: replace every existing tool named encjson, copy a configuration tree, and remove obsolete content.
+steps:
+  - action: replace-file
+    src: ./bin/encjson
+    dst: /usr/local/bin/encjson
+    find-all: encjson
+    mode: "0755"
+  - action: add-dir
+    src: ./config/
+    dst: /etc/myapp/
+    owner: "1001:0"
+  - action: remove-file
+    dst: /etc/myapp/default-password
+  - action: remove-dir
+    dst: /usr/share/myapp/examples
+  - action: add-file
+    src: ./bin/healthcheck
+    dst: /usr/local/bin/healthcheck
+    mode: "0755"
+    condition:
+      if-not-exists-in: [/bin, /usr/bin, /usr/local/bin]
+
+oci-patch copy --recipe patch-tools.yml SOURCE DEST`, color)
+
+	section(w, "Rebase onto another image", color)
+	codeBlock(w, `# rebase.yml: take application files from the CLI source, then write them onto a clean runtime image.
+sources:
+  - id: original
+    ref: "{{.SourceImage}}"
+  - id: runtime
+    ref: docker://registry.example.com/library/jre-slim:21
+steps:
+  - action: use-base
+    from: runtime
+  - action: copy-file-from
+    from: original
+    src: /app/myapp.jar
+    dst: /app/myapp.jar
+    owner: "1001:0"
+  - action: fix-permissions
+    path: /app
+    owner: "1001:0"
+    mode: g=u
+  - action: set-entrypoint
+    value_list: ["java", "-jar", "/app/myapp.jar"]
+
+oci-patch copy --recipe rebase.yml --reduce-changes SOURCE DEST`, color)
+
+	section(w, "Unpack or extract an artifact", color)
+	codeBlock(w, `# artifacts.yml: unzip a JAR already in the image and also write one source file to the local machine.
+sources:
+  - id: original
+    ref: "{{.SourceImage}}"
+steps:
+  - action: unzip-to
+    src: /app/myapp.jar
+    dst: /app/classes/
+    owner: "1001:0"
+  - action: extract-file
+    from: original
+    src: /app/myapp.jar
+    dst-local: ./artifacts/myapp.jar
+
+oci-patch copy --recipe artifacts.yml SOURCE DEST`, color)
+
+	section(w, "Protect an application directory", color)
+	codeBlock(w, `# shadow.yml: replace /app with a self-extracting encrypted bootstrap.
+steps:
+  - action: shadow
+    path: /app
+    extract-to: /app
+    output: /app/app.self
+  - action: fix-permissions
+    path: /app
+    owner: "1001:0"
+    mode: g=u
+    setgid-dirs: true
+
+# --reduce creates one final filesystem layer; use it when the smallest individual image matters.
+oci-patch copy --recipe shadow.yml --reduce SOURCE DEST`, color)
 
 	section(w, "Inspect image contents", color)
 	codeBlock(w, `oci-patch inspect docker://registry.example.com/team/app:latest

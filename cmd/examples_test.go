@@ -17,9 +17,15 @@ func TestWriteExamplesPlain(t *testing.T) {
 		"Batch copy",
 		"oci-patch copy --batch-file images.yml --src-insecure --dest-insecure",
 		"# images.yml",
-		"  - src: harbor.cetin/tsm/release/tsm-config:TSM-Core_RE60_BF01_01.01",
-		"    dest: harbor.cetin/tsm/release/tsm-ticket:2.2-test-latest",
+		"  - src: registry.example.com/team/config:release-1.0",
+		"    dest: registry.example.com/team/ticket:test-latest",
 		"--reduce-changes",
+		"action: use-base",
+		"action: shadow",
+		"action: replace-file",
+		"action: extract-file",
+		"action: unzip-to",
+		"action: set-cmd",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output does not contain %q:\n%s", want, got)

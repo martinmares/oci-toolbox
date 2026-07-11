@@ -10,9 +10,9 @@ steps:
       if-not-exists: /usr/local/bin/encjson
 
   - action: set-label
-    key: "org.datalite.patched-by"
+  key: "org.opencontainers.image.patched-by"
     value: "oci-patch"
 
   - action: set-label
-    key: "org.datalite.patch-recipe"
+  key: "org.opencontainers.image.patch-recipe"
     value: "inject-encjson"

@@ -37,5 +37,5 @@ steps:
     value_list: ["java", "-jar", "/app/dist/app.jar"]
 
   - action: set-label
-    key: "org.datalite.base"
+  key: "org.opencontainers.image.base.name"
     value: "alpine:3.21"

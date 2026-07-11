@@ -124,6 +124,14 @@ Cross-kompilace pro Linux amd64:
 GOOS=linux GOARCH=amd64 go build -o oci-patch-linux-amd64 .
 ```
 
+S nástrojem [just](https://just.systems/) se lokální binárky ve stejném stylu jako release zapisují do `dist/`:
+
+```bash
+just build-linux
+just build-macos
+just build-windows
+```
+
 ---
 
 ## Příkazy
@@ -212,13 +220,13 @@ Pro opakované kopírování více image můžeš použít `--batch-file`. Stejn
 ```yaml
 # images.yml
 copy:
-  - src: harbor.cetin/tsm/release/tsm-config:TSM-Core_RE60_BF01_01.01
-    dest: harbor.cetin/tsm/release/tsm-config:2.2-test-latest
+  - src: registry.example.com/team/config:release-1.0
+    dest: registry.example.com/team/config:test-latest
     dest_tags:
       - latest
       - stable
-  - src: harbor.cetin/tsm/release/tsm-ticket:TSM-Core_RE60_BF01_01.01
-    dest: harbor.cetin/tsm/release/tsm-ticket:2.2-test-latest
+  - src: registry.example.com/team/ticket:release-1.0
+    dest: registry.example.com/team/ticket:test-latest
 ```
 
 ```bash
@@ -325,7 +333,7 @@ Pokud soubor neexistuje, `cat` skončí úspěšně a nevypíše nic. S `--debug
 ```bash
 oci-patch cat \
   --src-insecure \
-  docker://harbor.cetin/tsm/stage/tsm-gateway:2.2-test-latest \
+  docker://registry.example.com/team/gateway:2.2-test-latest \
   /app/resources/git.properties
 
 # Chybějící soubory jsou tiché, pokud nepoužiješ --debug
@@ -388,7 +396,7 @@ oci-patch tree --src-insecure docker://registry.example.com/app:latest /app
 oci-patch examples
 ```
 
-Vypíše přímo v terminálu stručnou kuchařku příkazů: běžné kopírování image, batch copy včetně kompletní struktury `images.yml`, patch pomocí recipe, redukci vrstev a prohlížení obsahu image.
+Vypíše přímo v terminálu kuchařku příkazů: běžné kopírování image, batch copy včetně kompletní struktury `images.yml` a kompletní recipe pro Java aplikaci, patch nástrojů a konfigurace, rebasing, extrakci artifactu, rozbalení archivu, `shadow`, práva, metadata a redukci vrstev.
 
 ```bash
 oci-patch examples
@@ -725,7 +733,7 @@ steps:
       if-not-exists: /usr/local/bin/encjson
 
   - action: set-label
-    key: "org.datalite.patched-by"
+    key: "org.opencontainers.image.patched-by"
     value: "oci-patch"
 ```
 
@@ -733,8 +741,8 @@ steps:
 oci-patch copy \
   --src-creds user:pass --dest-creds user:pass \
   --recipe inject-encjson.yml \
-  docker://registry.datalite.cz/tsm/tsm-gateway:2.3-latest \
-  docker://registry.datalite.cz/tsm/tsm-gateway:2026-04-17.01
+  docker://registry.example.com/team/gateway:2.3-latest \
+  docker://registry.example.com/team/gateway:2026-04-17.01
 ```
 
 ### Rebase Java aplikace na čistý Alpine image
@@ -776,7 +784,7 @@ steps:
     value_list: ["java", "-jar", "/app/dist/app.jar"]
 
   - action: set-label
-    key: "org.datalite.base"
+    key: "org.opencontainers.image.base.name"
     value: "alpine:3.21"
 ```
 

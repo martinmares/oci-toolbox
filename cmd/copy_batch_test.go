@@ -12,10 +12,10 @@ import (
 func TestLoadCopyBatch(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
-  - src: harbor.cetin/tsm/release/tsm-config:old
-    dest: harbor.cetin/tsm/release/tsm-config:new
-  - src: harbor.cetin/tsm/release/tsm-ticket:old
-    destination: harbor.cetin/tsm/release/tsm-ticket:new
+  - src: registry.example.com/team/config:old
+    dest: registry.example.com/team/config:new
+  - src: registry.example.com/team/ticket:old
+    destination: registry.example.com/team/ticket:new
 `)
 
 	items, err := loadCopyBatch(path)
@@ -25,10 +25,10 @@ copy:
 	if len(items) != 2 {
 		t.Fatalf("items = %d, want 2", len(items))
 	}
-	if items[1].target() != "harbor.cetin/tsm/release/tsm-ticket:new" {
+	if items[1].target() != "registry.example.com/team/ticket:new" {
 		t.Fatalf("destination alias not used: %q", items[1].target())
 	}
-	if items[0].source() != "harbor.cetin/tsm/release/tsm-config:old" {
+	if items[0].source() != "registry.example.com/team/config:old" {
 		t.Fatalf("src not used: %q", items[0].source())
 	}
 }
@@ -36,15 +36,15 @@ copy:
 func TestLoadCopyBatchAcceptsSourceAlias(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
-  - source: harbor.cetin/tsm/release/tsm-config:old
-    dest: harbor.cetin/tsm/release/tsm-config:new
+  - source: registry.example.com/team/config:old
+    dest: registry.example.com/team/config:new
 `)
 
 	items, err := loadCopyBatch(path)
 	if err != nil {
 		t.Fatalf("loadCopyBatch: %v", err)
 	}
-	if items[0].source() != "harbor.cetin/tsm/release/tsm-config:old" {
+	if items[0].source() != "registry.example.com/team/config:old" {
 		t.Fatalf("source alias not used: %q", items[0].source())
 	}
 }
@@ -52,8 +52,8 @@ copy:
 func TestLoadCopyBatchAcceptsDestTags(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
-  - src: harbor.cetin/tsm/release/tsm-config:old
-    dest: harbor.cetin/tsm/release/tsm-config:new
+  - src: registry.example.com/team/config:old
+    dest: registry.example.com/team/config:new
     dest_tags:
       - latest
       - stable
@@ -71,10 +71,10 @@ copy:
 func TestLoadCopyBatchRejectsDuplicateDestination(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
-  - src: harbor.cetin/tsm/release/tsm-config:old
-    dest: harbor.cetin/tsm/release/tsm-config:new
-  - src: harbor.cetin/tsm/release/tsm-ticket:old
-    dest: harbor.cetin/tsm/release/tsm-config:new
+  - src: registry.example.com/team/config:old
+    dest: registry.example.com/team/config:new
+  - src: registry.example.com/team/ticket:old
+    dest: registry.example.com/team/config:new
 `)
 
 	_, err := loadCopyBatch(path)
@@ -86,12 +86,12 @@ copy:
 func TestLoadCopyBatchRejectsDuplicateDestinationFromDestTags(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
-  - src: harbor.cetin/tsm/release/tsm-config:old
-    dest: harbor.cetin/tsm/release/tsm-config:new
+  - src: registry.example.com/team/config:old
+    dest: registry.example.com/team/config:new
     dest_tags:
       - latest
-  - src: harbor.cetin/tsm/release/tsm-ticket:old
-    dest: harbor.cetin/tsm/release/tsm-config:latest
+  - src: registry.example.com/team/ticket:old
+    dest: registry.example.com/team/config:latest
 `)
 
 	_, err := loadCopyBatch(path)
@@ -103,8 +103,8 @@ copy:
 func TestLoadCopyBatchRejectsEmptyDestTag(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
-  - src: harbor.cetin/tsm/release/tsm-config:old
-    dest: harbor.cetin/tsm/release/tsm-config:new
+  - src: registry.example.com/team/config:old
+    dest: registry.example.com/team/config:new
     dest_tags:
       - ""
 `)
@@ -118,9 +118,9 @@ copy:
 func TestLoadCopyBatchRejectsConflictingDestinationAliases(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
-  - src: harbor.cetin/tsm/release/tsm-config:old
-    dest: harbor.cetin/tsm/release/tsm-config:new
-    destination: harbor.cetin/tsm/release/tsm-config:other
+  - src: registry.example.com/team/config:old
+    dest: registry.example.com/team/config:new
+    destination: registry.example.com/team/config:other
 `)
 
 	_, err := loadCopyBatch(path)
@@ -132,9 +132,9 @@ copy:
 func TestLoadCopyBatchRejectsConflictingSourceAliases(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
-  - src: harbor.cetin/tsm/release/tsm-config:old
-    source: harbor.cetin/tsm/release/tsm-config:other
-    dest: harbor.cetin/tsm/release/tsm-config:new
+  - src: registry.example.com/team/config:old
+    source: registry.example.com/team/config:other
+    dest: registry.example.com/team/config:new
 `)
 
 	_, err := loadCopyBatch(path)
