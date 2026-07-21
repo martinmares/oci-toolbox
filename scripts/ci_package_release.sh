@@ -13,6 +13,8 @@ if [[ -z "${version}" ]]; then
   exit 1
 fi
 
+bash scripts/build_embedded_extractors.sh
+
 rm -rf "${release_dir}"
 mkdir -p "${release_dir}" .tmp/go-build-cache
 

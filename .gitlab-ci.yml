@@ -25,6 +25,7 @@ before_script:
 check:
   stage: verify
   script:
+    - bash scripts/build_embedded_extractors.sh
     - go build ./...
     - cd internal/shadow/extractor && go build -o "$CI_PROJECT_DIR/.tmp/extractor-check" .
   rules:

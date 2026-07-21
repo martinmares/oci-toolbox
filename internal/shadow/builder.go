@@ -12,7 +12,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	_ "embed"
+	"embed"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -28,12 +28,12 @@ import (
 	"github.com/martinmares/oci-patch/internal/image"
 )
 
-// embeddedExtractorLinuxAMD64 is the static extractor injected into Linux
-// amd64 images by the shadow recipe. It is embedded in the oci-patch binary;
-// shadow therefore has no source-tree, Go toolchain, or runtime path dependency.
+// embeddedExtractors contains the static extractors injected into target images
+// by the shadow recipe. It is embedded in the oci-patch binary; shadow therefore
+// has no source-tree, Go toolchain, or runtime path dependency.
 //
-//go:embed embedded-extractor-linux-amd64
-var embeddedExtractorLinuxAMD64 []byte
+//go:embed embedded-extractor-*
+var embeddedExtractors embed.FS
 
 const (
 	magicStr         = "OCIPATCH"
@@ -71,7 +71,7 @@ func Apply(dstImg, srcImg v1.Image, shadowPath, extractTo, outputPath string) (v
 
 	extractorBin, err := compileExtractor(goos, goarch)
 	if err != nil {
-		return nil, fmt.Errorf("compiling extractor for %s/%s: %w", goos, goarch, err)
+		return nil, fmt.Errorf("loading extractor for %s/%s: %w", goos, goarch, err)
 	}
 
 	selfBin := appendPayload(extractorBin, payloadData, password, extractTo)
@@ -284,10 +284,12 @@ func detectPlatform(img v1.Image) (goos, goarch string, err error) {
 }
 
 func compileExtractor(goos, goarch string) ([]byte, error) {
-	if goos == "linux" && goarch == "amd64" {
-		return append([]byte(nil), embeddedExtractorLinuxAMD64...), nil
+	name := fmt.Sprintf("embedded-extractor-%s-%s", goos, goarch)
+	binary, err := embeddedExtractors.ReadFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("no embedded extractor for %s/%s", goos, goarch)
 	}
-	return nil, fmt.Errorf("no embedded extractor for %s/%s", goos, goarch)
+	return binary, nil
 }
 
 func archiveOrder(typeflag byte) int {

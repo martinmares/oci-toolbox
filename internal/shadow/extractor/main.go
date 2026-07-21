@@ -24,9 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
-
-	charmlog "github.com/charmbracelet/log"
 )
 
 // Payload appended to this binary by oci-patch:
@@ -129,16 +126,11 @@ func parseOptions(args []string) (options, error) {
 }
 
 func setupLogger(debug bool) {
-	level := charmlog.WarnLevel
+	level := slog.LevelWarn
 	if debug {
-		level = charmlog.DebugLevel
+		level = slog.LevelDebug
 	}
-	handler := charmlog.NewWithOptions(os.Stderr, charmlog.Options{
-		Level:           level,
-		TimeFormat:      time.RFC3339,
-		ReportTimestamp: true,
-	})
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 }
 
 // parsePayload reads the payload appended after the ELF binary.

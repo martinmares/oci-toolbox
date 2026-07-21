@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -126,6 +127,100 @@ func TestDecryptPayloadReaderAndExtractArchiveChunked(t *testing.T) {
 	if string(data) != "hello" {
 		t.Fatalf("file contents = %q, want hello", data)
 	}
+}
+
+func TestRunExtractsAppendedPayload(t *testing.T) {
+	password := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	archive := buildTestArchive(t)
+	payload, err := encryptChunkedForTest(archive, password, 3)
+	if err != nil {
+		t.Fatalf("encryptChunkedForTest: %v", err)
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	executableData, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q): %v", executable, err)
+	}
+
+	destDir := filepath.Join(t.TempDir(), "app")
+	selfPath := filepath.Join(t.TempDir(), "app.self")
+	self := appendCurrentPayload(executableData, payload, password, destDir)
+	if err := os.WriteFile(selfPath, self, 0o755); err != nil {
+		t.Fatalf("os.WriteFile(%q): %v", selfPath, err)
+	}
+
+	oldArgs := os.Args
+	os.Args = []string{selfPath}
+	t.Cleanup(func() { os.Args = oldArgs })
+
+	if err := run(nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(destDir, "app.txt"))
+	if err != nil {
+		t.Fatalf("os.ReadFile extracted file: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("extracted content = %q, want hello", data)
+	}
+}
+
+func TestExecutableExtractsAppendedPayload(t *testing.T) {
+	password := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	archive := buildTestArchive(t)
+	payload, err := encryptChunkedForTest(archive, password, 3)
+	if err != nil {
+		t.Fatalf("encryptChunkedForTest: %v", err)
+	}
+
+	extractorPath := filepath.Join(t.TempDir(), "extractor")
+	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", extractorPath, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building extractor: %v\n%s", err, output)
+	}
+	extractor, err := os.ReadFile(extractorPath)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q): %v", extractorPath, err)
+	}
+
+	destDir := filepath.Join(t.TempDir(), "app")
+	selfPath := filepath.Join(t.TempDir(), "app.self")
+	self := appendCurrentPayload(extractor, payload, password, destDir)
+	if err := os.WriteFile(selfPath, self, 0o755); err != nil {
+		t.Fatalf("os.WriteFile(%q): %v", selfPath, err)
+	}
+
+	runExtractor := exec.Command(selfPath)
+	if output, err := runExtractor.CombinedOutput(); err != nil {
+		t.Fatalf("running app.self: %v\n%s", err, output)
+	}
+
+	data, err := os.ReadFile(filepath.Join(destDir, "app.txt"))
+	if err != nil {
+		t.Fatalf("os.ReadFile extracted file: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("extracted content = %q, want hello", data)
+	}
+}
+
+func appendCurrentPayload(executable, payload []byte, password, extractTo string) []byte {
+	result := make([]byte, 0, len(executable)+len(payload)+len(password)+len(extractTo)+footerSize)
+	result = append(result, executable...)
+	result = append(result, payload...)
+	result = append(result, password...)
+	result = append(result, extractTo...)
+
+	footer := make([]byte, footerSize)
+	copy(footer[:8], magicStr)
+	binary.LittleEndian.PutUint32(footer[8:12], uint32(len(extractTo)))
+	binary.LittleEndian.PutUint32(footer[12:16], uint32(len(payload)))
+	return append(result, footer...)
 }
 
 func buildTestArchive(t *testing.T) []byte {
