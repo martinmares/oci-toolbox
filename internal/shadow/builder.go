@@ -12,14 +12,12 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
-	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -30,6 +28,13 @@ import (
 	"github.com/martinmares/oci-patch/internal/image"
 )
 
+// embeddedExtractorLinuxAMD64 is the static extractor injected into Linux
+// amd64 images by the shadow recipe. It is embedded in the oci-patch binary;
+// shadow therefore has no source-tree, Go toolchain, or runtime path dependency.
+//
+//go:embed embedded-extractor-linux-amd64
+var embeddedExtractorLinuxAMD64 []byte
+
 const (
 	magicStr         = "OCIPATCH"
 	passwordLen      = 64 // hex(32 random bytes)
@@ -37,15 +42,6 @@ const (
 	payloadPrefix    = "GCM2"
 	payloadChunkSize = 1024 * 1024
 )
-
-// extractorSrcDir is the path to the extractor source relative to the module root.
-// Resolved at build time via runtime.Caller.
-var extractorSrcDir string
-
-func init() {
-	_, file, _, _ := runtime.Caller(0)
-	extractorSrcDir = filepath.Join(filepath.Dir(file), "extractor")
-}
 
 // Apply reads shadowPath from srcImg, builds app.self, removes the original
 // path from dstImg, and injects the bootstrap binary at outputPath.
@@ -288,27 +284,10 @@ func detectPlatform(img v1.Image) (goos, goarch string, err error) {
 }
 
 func compileExtractor(goos, goarch string) ([]byte, error) {
-	tmpBin, err := os.CreateTemp("", "oci-patch-extractor-*")
-	if err != nil {
-		return nil, err
+	if goos == "linux" && goarch == "amd64" {
+		return append([]byte(nil), embeddedExtractorLinuxAMD64...), nil
 	}
-	tmpBin.Close()
-	defer os.Remove(tmpBin.Name())
-
-	cmd := exec.Command("go", "build", "-ldflags=-s -w", "-o", tmpBin.Name(), ".")
-	cmd.Dir = extractorSrcDir
-	cmd.Env = append(os.Environ(),
-		"GOOS="+goos,
-		"GOARCH="+goarch,
-		"CGO_ENABLED=0",
-		"GOFLAGS=-trimpath",
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("go build failed: %w\n%s", err, out)
-	}
-
-	return os.ReadFile(tmpBin.Name())
+	return nil, fmt.Errorf("no embedded extractor for %s/%s", goos, goarch)
 }
 
 func archiveOrder(typeflag byte) int {
