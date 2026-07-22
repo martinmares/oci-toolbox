@@ -154,6 +154,7 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 | `--debug` | Enable verbose output |
 | `--batch-file path/to/images.yml` | Run multiple copy jobs from a YAML file |
 | `--continue-on-error` | Continue batch processing after a copy fails |
+| `--no-wrap-entrypoint` | Disable the automatic entrypoint wrapper for every `shadow` step in the supplied recipes |
 | `--dest-tag tag` | Add an extra destination tag in the same repository without copying layers again (repeatable) |
 | `--dest-no-reuse` | Disable cross-repository blob mount/reuse at destination (retry fallback) |
 | `--reduce` | Materialize the final filesystem into a single minimal layer |

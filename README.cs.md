@@ -154,6 +154,7 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 | `--debug` | Zapne podrobný výstup |
 | `--batch-file cesta/k/images.yml` | Spustí více copy jobů ze YAML souboru |
 | `--continue-on-error` | V batch režimu pokračuje další položkou po selhání |
+| `--no-wrap-entrypoint` | Vypne automatický entrypoint wrapper pro všechny kroky `shadow` v načtených recipe |
 | `--dest-tag tag` | Přidá další cílový tag ve stejném repository bez opakovaného kopírování vrstev (lze opakovat) |
 | `--dest-no-reuse` | Zakáže cross-repository blob mount/reuse v cíli (fallback při problémech) |
 | `--reduce` | Materializuje finální filesystem do jediné minimální vrstvy |

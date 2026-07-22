@@ -34,6 +34,7 @@ var (
 	reduceChanges    bool
 	batchFile        string
 	continueOnError  bool
+	noWrapEntrypoint bool
 	srcInsecure      bool
 	destInsecure     bool
 	destTags         []string
@@ -63,6 +64,7 @@ func init() {
 	copyCmd.Flags().BoolVar(&reduceChanges, "reduce-changes", false, "preserve base layers and reduce recipe changes into one delta layer")
 	copyCmd.Flags().StringVar(&batchFile, "batch-file", "", "YAML file with copy jobs to run sequentially")
 	copyCmd.Flags().BoolVar(&continueOnError, "continue-on-error", false, "continue batch processing after a copy fails")
+	copyCmd.Flags().BoolVar(&noWrapEntrypoint, "no-wrap-entrypoint", false, "do not wrap the original entrypoint for shadow recipe steps")
 	copyCmd.Flags().BoolVar(&srcInsecure, "src-insecure", false, "skip TLS certificate verification for source registry")
 	copyCmd.Flags().BoolVar(&destInsecure, "dest-insecure", false, "skip TLS certificate verification for destination registry")
 	copyCmd.Flags().StringArrayVar(&destTags, "dest-tag", nil, "additional destination tag in the same repository (may be specified multiple times)")
@@ -455,6 +457,9 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 			closeProg(srcCh, dstCh)
 			return err
 		}
+		if noWrapEntrypoint {
+			disableShadowEntrypointWrapping(r)
+		}
 
 		if !showProgress {
 			slog.Info("applying recipe", "name", r.Name)
@@ -683,6 +688,15 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 	}
 
 	return nil
+}
+
+func disableShadowEntrypointWrapping(r *recipe.Recipe) {
+	disabled := false
+	for i := range r.Steps {
+		if r.Steps[i].Action == "shadow" {
+			r.Steps[i].ShadowWrapEntrypoint = &disabled
+		}
+	}
 }
 
 func tagAdditionalDestTags(dst name.Reference, img v1.Image, opts []remote.Option, tags []string, setPhase func(string), jsonEmitter *progress.JSONEmitter) error {
