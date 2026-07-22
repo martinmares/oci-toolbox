@@ -550,6 +550,8 @@ steps:
 
 Nedávej `set-entrypoint` až za `shadow`, protože by wrapper přepsal. Vlastní `set-entrypoint` umísti před `shadow`.
 
+Pro zachování startovacích metadat image použij `wrap-entrypoint: false`. Pak musí deployment před startem aplikace spustit `app.self -cleanup` sám.
+
 ```yaml
 - action: shadow
   path: /app
@@ -563,6 +565,15 @@ Nedávej `set-entrypoint` až za `shadow`, protože by wrapper přepsal. Vlastn�
   path: /app
   extract-to: /app
   output: /app/app.self
+```
+
+```yaml
+# Nechá Entrypoint a Cmd beze změny; app.self pak musí spustit deployment.
+- action: shadow
+  path: /app
+  extract-to: /app
+  output: /app/app.self
+  wrap-entrypoint: false
 ```
 
 #### Metadata

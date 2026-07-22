@@ -66,8 +66,9 @@ type Step struct {
 	FindAll string `yaml:"find-all"` // basename to find and whiteout before adding
 
 	// shadow
-	ShadowExtractTo string `yaml:"extract-to"` // where to unpack at container runtime
-	ShadowOutput    string `yaml:"output"`     // destination path in image (default /app/app.self)
+	ShadowExtractTo      string `yaml:"extract-to"`      // where to unpack at container runtime
+	ShadowOutput         string `yaml:"output"`          // destination path in image (default /app/app.self)
+	ShadowWrapEntrypoint *bool  `yaml:"wrap-entrypoint"` // default true; run app.self before the original command
 
 	// Condition (optional)
 	Condition *Condition `yaml:"condition"`

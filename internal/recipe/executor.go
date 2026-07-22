@@ -121,7 +121,7 @@ func ApplyWithReporter(workingImg v1.Image, r *Recipe, ctx *Context, report func
 				}
 			}
 			img, err = shadow.Apply(img, src, step.Path, step.ShadowExtractTo, output)
-			if err == nil {
+			if err == nil && (step.ShadowWrapEntrypoint == nil || *step.ShadowWrapEntrypoint) {
 				img, err = image.WrapEntrypointWithBootstrap(img, output)
 			}
 

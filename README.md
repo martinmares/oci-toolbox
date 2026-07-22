@@ -550,6 +550,8 @@ steps:
 
 Do not add `set-entrypoint` after `shadow`, because it would replace this wrapper. Put a custom `set-entrypoint` before `shadow` instead.
 
+Set `wrap-entrypoint: false` to leave the image startup metadata unchanged. In that case, the deployment must run `app.self -cleanup` itself before starting the application.
+
 ```yaml
 - action: shadow
   path: /app
@@ -563,6 +565,15 @@ Do not add `set-entrypoint` after `shadow`, because it would replace this wrappe
   path: /app
   extract-to: /app
   output: /app/app.self
+```
+
+```yaml
+# Leave Entrypoint and Cmd unchanged; start app.self from the deployment instead.
+- action: shadow
+  path: /app
+  extract-to: /app
+  output: /app/app.self
+  wrap-entrypoint: false
 ```
 
 #### Metadata

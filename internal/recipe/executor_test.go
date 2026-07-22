@@ -774,3 +774,46 @@ steps:
 		t.Fatalf("unexpected reduced /app tree: %+v", gotPaths)
 	}
 }
+
+func TestRecipe_shadowCanSkipEntrypointWrapper(t *testing.T) {
+	img := testutil.NewImageWithFiles(t, map[string][]byte{
+		"app/app.jar": []byte("application"),
+	})
+	var err error
+	img, err = image.SetEntrypoint(img, []string{"java", "-jar", "/app/app.jar"})
+	if err != nil {
+		t.Fatalf("SetEntrypoint: %v", err)
+	}
+	img, err = image.SetCmd(img, []string{"--server.port=8080"})
+	if err != nil {
+		t.Fatalf("SetCmd: %v", err)
+	}
+
+	r, err := recipe.Load(writeRecipe(t, `
+steps:
+  - action: shadow
+    path: /app
+    extract-to: /app
+    output: /app/app.self
+    wrap-entrypoint: false
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	result, err := recipe.Apply(img, r, emptyCtx())
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	cfg, err := result.ConfigFile()
+	if err != nil {
+		t.Fatalf("ConfigFile: %v", err)
+	}
+	if !slices.Equal(cfg.Config.Entrypoint, []string{"java", "-jar", "/app/app.jar"}) {
+		t.Fatalf("entrypoint = %#v", cfg.Config.Entrypoint)
+	}
+	if !slices.Equal(cfg.Config.Cmd, []string{"--server.port=8080"}) {
+		t.Fatalf("cmd = %#v", cfg.Config.Cmd)
+	}
+}
