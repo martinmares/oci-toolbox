@@ -546,7 +546,9 @@ steps:
 
 `use-base` je deklarativní obdoba `FROM alpine-base` uprostřed multi-stage Dockerfile. Do té chvíle recipe pracuje s image předanou na CLI. Po `use-base` se aktuální pracovní image přepne na zvolený zdroj a další kroky zapisují už do něj. Když potřebuješ po přepnutí vzít soubor z původní source image, dej původní image do `sources` jako `ref: "{{.SourceImage}}"` a použij `from: original` u kroků jako `copy-file-from` nebo `shadow`.
 
-**`shadow`** — Zabalí strom souborů do šifrované self-extracting binárky a původní cestu v image nahradí touto bootstrap binárkou. Bez `from:` čte z aktuální pracovní image, s `from:` může číst z jiné pojmenované source image a zapisovat do aktuální image.
+**`shadow`** — Zabalí strom souborů do šifrované self-extracting binárky a původní cestu v image nahradí touto bootstrap binárkou. Současně obalí původní `ENTRYPOINT`: před startem původního procesu spustí `/bin/sh` příkaz `app.self -cleanup`, který soubory obnoví a bootstrap smaže. Původní `ENTRYPOINT` i `CMD` zůstávají zachované. Bez `from:` čte z aktuální pracovní image, s `from:` může číst z jiné pojmenované source image a zapisovat do aktuální image. Cílová image musí obsahovat `/bin/sh`.
+
+Nedávej `set-entrypoint` až za `shadow`, protože by wrapper přepsal. Vlastní `set-entrypoint` umísti před `shadow`.
 
 ```yaml
 - action: shadow

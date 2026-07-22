@@ -546,7 +546,9 @@ steps:
 
 `use-base` is the declarative equivalent of switching to a new `FROM alpine-base` in the middle of a multi-stage Dockerfile. Before that step, the recipe works on the image passed on the CLI. After `use-base`, the current working image becomes the selected source and later steps write into that image. If you still need files from the original source image, declare it in `sources` with `ref: "{{.SourceImage}}"` and use `from: original` on steps such as `copy-file-from` or `shadow`.
 
-**`shadow`** — Pack a file tree into an encrypted self-extracting binary and replace the original path with that bootstrap binary. By default it reads from the current working image; with `from:` it can read from another named source while writing into the current image.
+**`shadow`** — Pack a file tree into an encrypted self-extracting binary and replace the original path with that bootstrap binary. It also wraps the original `ENTRYPOINT`: before starting the original process, `/bin/sh` runs `app.self -cleanup`, which restores the files and removes the bootstrap. The original `ENTRYPOINT` and `CMD` are preserved. By default it reads from the current working image; with `from:` it can read from another named source while writing into the current image. The target image must provide `/bin/sh`.
+
+Do not add `set-entrypoint` after `shadow`, because it would replace this wrapper. Put a custom `set-entrypoint` before `shadow` instead.
 
 ```yaml
 - action: shadow

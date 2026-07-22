@@ -138,6 +138,7 @@ oci-patch copy --recipe artifacts.yml SOURCE DEST`, color)
 
 	section(w, "Protect an application directory", color)
 	codeBlock(w, `# shadow.yml: replace /app with a self-extracting encrypted bootstrap.
+# The original Entrypoint and Cmd are preserved; app.self runs first and removes itself.
 steps:
   - action: shadow
     path: /app

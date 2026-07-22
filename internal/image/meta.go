@@ -5,6 +5,14 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 )
 
+const shadowEntrypointScript = `bootstrap="$1"
+if [ -x "$bootstrap" ]; then
+  cd "$(dirname "$bootstrap")" || exit $?
+  "$bootstrap" -cleanup || exit $?
+fi
+shift
+exec "$@"`
+
 // SetEnv sets or overrides an environment variable in the image config.
 func SetEnv(img v1.Image, key, value string) (v1.Image, error) {
 	cfg, err := img.ConfigFile()
@@ -47,6 +55,21 @@ func SetEntrypoint(img v1.Image, argv []string) (v1.Image, error) {
 	}
 	cfg = cfg.DeepCopy()
 	cfg.Config.Entrypoint = argv
+	return mutate.ConfigFile(img, cfg)
+}
+
+// WrapEntrypointWithBootstrap runs bootstrap before the original image command.
+// The original Entrypoint and Cmd remain command arguments, so Docker and
+// Kubernetes command overrides retain their normal semantics.
+func WrapEntrypointWithBootstrap(img v1.Image, bootstrap string) (v1.Image, error) {
+	cfg, err := img.ConfigFile()
+	if err != nil {
+		return nil, err
+	}
+	cfg = cfg.DeepCopy()
+
+	wrapped := []string{"/bin/sh", "-c", shadowEntrypointScript, "oci-patch-shadow", bootstrap}
+	cfg.Config.Entrypoint = append(wrapped, cfg.Config.Entrypoint...)
 	return mutate.ConfigFile(img, cfg)
 }
 

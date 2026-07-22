@@ -3,6 +3,7 @@ package recipe_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -633,6 +634,14 @@ steps:
 		t.Fatalf("Load: %v", err)
 	}
 
+	baseImg, err = image.SetEntrypoint(baseImg, []string{"java", "-jar", "/app/app.jar"})
+	if err != nil {
+		t.Fatalf("SetEntrypoint: %v", err)
+	}
+	baseImg, err = image.SetCmd(baseImg, []string{"--server.port=8080"})
+	if err != nil {
+		t.Fatalf("SetCmd: %v", err)
+	}
 	ctx := &recipe.Context{Sources: map[string]v1.Image{
 		"src":  srcImg,
 		"base": baseImg,
@@ -688,6 +697,27 @@ steps:
 	}
 	if appSelf.Mode.Perm() != 0o775 {
 		t.Fatalf("/app/app.self mode = %#o, want 0775", appSelf.Mode.Perm())
+	}
+
+	cfg, err := result.ConfigFile()
+	if err != nil {
+		t.Fatalf("ConfigFile: %v", err)
+	}
+	wantEntrypoint := []string{
+		"/bin/sh",
+		"-c",
+		"bootstrap=\"$1\"\nif [ -x \"$bootstrap\" ]; then\n  cd \"$(dirname \"$bootstrap\")\" || exit $?\n  \"$bootstrap\" -cleanup || exit $?\nfi\nshift\nexec \"$@\"",
+		"oci-patch-shadow",
+		"/app/app.self",
+		"java",
+		"-jar",
+		"/app/app.jar",
+	}
+	if !slices.Equal(cfg.Config.Entrypoint, wantEntrypoint) {
+		t.Fatalf("entrypoint = %#v, want %#v", cfg.Config.Entrypoint, wantEntrypoint)
+	}
+	if !slices.Equal(cfg.Config.Cmd, []string{"--server.port=8080"}) {
+		t.Fatalf("cmd = %#v", cfg.Config.Cmd)
 	}
 }
 
