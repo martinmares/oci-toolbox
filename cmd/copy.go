@@ -65,7 +65,7 @@ func init() {
 	copyCmd.Flags().BoolVar(&reduceChanges, "reduce-changes", false, "preserve base layers and reduce recipe changes into one delta layer")
 	copyCmd.Flags().StringVar(&batchFile, "batch-file", "", "YAML file with copy jobs to run sequentially")
 	copyCmd.Flags().BoolVar(&continueOnError, "continue-on-error", false, "continue batch processing after a copy fails")
-	copyCmd.Flags().BoolVar(&wrapEntrypoint, "wrap-entrypoint", false, "wrap the original entrypoint for all shadow recipe steps")
+	copyCmd.Flags().BoolVar(&wrapEntrypoint, "wrap-entrypoint", false, "wrap SOURCE entrypoint and command for all shadow recipe steps")
 	copyCmd.Flags().BoolVar(&noWrapEntrypoint, "no-wrap-entrypoint", false, "do not wrap the original entrypoint for any shadow recipe step")
 	copyCmd.Flags().BoolVar(&srcInsecure, "src-insecure", false, "skip TLS certificate verification for source registry")
 	copyCmd.Flags().BoolVar(&destInsecure, "dest-insecure", false, "skip TLS certificate verification for destination registry")
@@ -453,6 +453,18 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 		}
 	}
 	sourceImg := img
+	var shadowEntrypointOverride *recipe.ShadowEntrypointOverride
+	if wrapEntrypoint {
+		sourceCfg, cfgErr := sourceImg.ConfigFile()
+		if cfgErr != nil {
+			closeProg(srcCh, dstCh)
+			return fmt.Errorf("reading source startup configuration: %w", cfgErr)
+		}
+		shadowEntrypointOverride = &recipe.ShadowEntrypointOverride{
+			Entrypoint: append([]string(nil), sourceCfg.Config.Entrypoint...),
+			Cmd:        append([]string(nil), sourceCfg.Config.Cmd...),
+		}
+	}
 
 	// --- apply recipes ---
 	var reduceBase v1.Image
@@ -478,6 +490,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 			}
 			return fmt.Errorf("resolving recipe sources: %w", err)
 		}
+		ctx.ShadowEntrypointOverride = shadowEntrypointOverride
 		for _, step := range r.Steps {
 			if step.Action != "use-base" {
 				continue

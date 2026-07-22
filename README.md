@@ -154,7 +154,7 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 | `--debug` | Enable verbose output |
 | `--batch-file path/to/images.yml` | Run multiple copy jobs from a YAML file |
 | `--continue-on-error` | Continue batch processing after a copy fails |
-| `--wrap-entrypoint` | Wrap the original entrypoint for every `shadow` step in the supplied recipes |
+| `--wrap-entrypoint` | Wrap the CLI `SOURCE` image's entrypoint and command for every `shadow` step; useful with `use-base` |
 | `--no-wrap-entrypoint` | Disable entrypoint wrapping for every `shadow` step in the supplied recipes |
 | `--dest-tag tag` | Add an extra destination tag in the same repository without copying layers again (repeatable) |
 | `--dest-no-reuse` | Disable cross-repository blob mount/reuse at destination (retry fallback) |
@@ -550,7 +550,7 @@ steps:
 
 **`shadow`** — Pack a file tree into an encrypted self-extracting binary and replace the original path with that bootstrap binary. It leaves image startup metadata unchanged by default. Set `wrap-entrypoint: true` to wrap the original `ENTRYPOINT`: before starting the original process, `/bin/sh` runs `app.self -cleanup`, which restores the files and removes the bootstrap. The original `ENTRYPOINT` and `CMD` are preserved. By default it reads from the current working image; with `from:` it can read from another named source while writing into the current image. Entry-point wrapping requires `/bin/sh` in the target image.
 
-Do not add `set-entrypoint` after a `shadow` step with `wrap-entrypoint: true`, because it would replace the wrapper. Put a custom `set-entrypoint` before `shadow` instead. The CLI flags `--wrap-entrypoint` and `--no-wrap-entrypoint` override every recipe step and cannot be combined.
+Do not add `set-entrypoint` after a `shadow` step with `wrap-entrypoint: true`, because it would replace the wrapper. Put a custom `set-entrypoint` before `shadow` instead. The CLI flags `--wrap-entrypoint` and `--no-wrap-entrypoint` override every recipe step and cannot be combined. `--wrap-entrypoint` additionally takes the `Entrypoint` and `Cmd` from the CLI `SOURCE` image before wrapping; this preserves an application's startup command when the recipe switches to a runtime image with `use-base`.
 
 ```yaml
 - action: shadow

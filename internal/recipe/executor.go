@@ -14,7 +14,15 @@ import (
 
 // Context holds named image sources resolved before execution.
 type Context struct {
-	Sources map[string]v1.Image
+	Sources                  map[string]v1.Image
+	ShadowEntrypointOverride *ShadowEntrypointOverride
+}
+
+// ShadowEntrypointOverride supplies startup metadata that shadow should wrap
+// instead of the current working image's metadata.
+type ShadowEntrypointOverride struct {
+	Entrypoint []string
+	Cmd        []string
 }
 
 // Apply applies all steps from a recipe to the given working image.
@@ -122,6 +130,15 @@ func ApplyWithReporter(workingImg v1.Image, r *Recipe, ctx *Context, report func
 			}
 			img, err = shadow.Apply(img, src, step.Path, step.ShadowExtractTo, output)
 			if err == nil && step.ShadowWrapEntrypoint != nil && *step.ShadowWrapEntrypoint {
+				if ctx.ShadowEntrypointOverride != nil {
+					img, err = image.SetEntrypoint(img, ctx.ShadowEntrypointOverride.Entrypoint)
+				}
+				if err == nil && ctx.ShadowEntrypointOverride != nil {
+					img, err = image.SetCmd(img, ctx.ShadowEntrypointOverride.Cmd)
+				}
+				if err != nil {
+					break
+				}
 				img, err = image.WrapEntrypointWithBootstrap(img, output)
 			}
 

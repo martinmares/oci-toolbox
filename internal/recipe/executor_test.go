@@ -13,6 +13,14 @@ import (
 	"github.com/martinmares/oci-patch/internal/testutil"
 )
 
+const shadowEntrypointScriptForTest = `bootstrap="$1"
+if [ -x "$bootstrap" ]; then
+  cd "$(dirname "$bootstrap")" || exit $?
+  "$bootstrap" -cleanup || exit $?
+fi
+shift
+exec "$@"`
+
 // writeRecipe writes a YAML string to a temp file and returns its path.
 func writeRecipe(t *testing.T, content string) string {
 	t.Helper()
@@ -827,6 +835,85 @@ steps:
 	}
 	if !slices.Equal(cfg.Config.Entrypoint, []string{"java", "-jar", "/app/app.jar"}) {
 		t.Fatalf("entrypoint = %#v", cfg.Config.Entrypoint)
+	}
+	if !slices.Equal(cfg.Config.Cmd, []string{"--server.port=8080"}) {
+		t.Fatalf("cmd = %#v", cfg.Config.Cmd)
+	}
+}
+
+func TestRecipe_shadowUsesStartupOverride(t *testing.T) {
+	original := testutil.NewImageWithFiles(t, map[string][]byte{
+		"app/app.jar": []byte("application"),
+	})
+	var err error
+	original, err = image.SetEntrypoint(original, []string{"java", "-jar", "/app/app.jar"})
+	if err != nil {
+		t.Fatalf("SetEntrypoint(original): %v", err)
+	}
+	original, err = image.SetCmd(original, []string{"--server.port=8080"})
+	if err != nil {
+		t.Fatalf("SetCmd(original): %v", err)
+	}
+
+	runtime := testutil.NewImage(t)
+	runtime, err = image.SetEntrypoint(runtime, []string{"runtime-entrypoint"})
+	if err != nil {
+		t.Fatalf("SetEntrypoint(runtime): %v", err)
+	}
+	runtime, err = image.SetCmd(runtime, []string{"runtime-cmd"})
+	if err != nil {
+		t.Fatalf("SetCmd(runtime): %v", err)
+	}
+
+	r, err := recipe.Load(writeRecipe(t, `
+sources:
+  - id: original
+    ref: "{{.SourceImage}}"
+  - id: runtime
+    ref: docker://example.com/runtime:latest
+steps:
+  - action: use-base
+    from: runtime
+  - action: shadow
+    from: original
+    path: /app
+    extract-to: /app
+    output: /app/app.self
+    wrap-entrypoint: true
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	sourceCfg, err := original.ConfigFile()
+	if err != nil {
+		t.Fatalf("original ConfigFile: %v", err)
+	}
+	ctx := &recipe.Context{
+		Sources: map[string]v1.Image{
+			"original": original,
+			"runtime":  runtime,
+		},
+		ShadowEntrypointOverride: &recipe.ShadowEntrypointOverride{
+			Entrypoint: sourceCfg.Config.Entrypoint,
+			Cmd:        sourceCfg.Config.Cmd,
+		},
+	}
+
+	result, err := recipe.Apply(testutil.NewImage(t), r, ctx)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	cfg, err := result.ConfigFile()
+	if err != nil {
+		t.Fatalf("ConfigFile: %v", err)
+	}
+	wantEntrypoint := []string{
+		"/bin/sh", "-c", shadowEntrypointScriptForTest, "oci-patch-shadow", "/app/app.self",
+		"java", "-jar", "/app/app.jar",
+	}
+	if !slices.Equal(cfg.Config.Entrypoint, wantEntrypoint) {
+		t.Fatalf("entrypoint = %#v, want %#v", cfg.Config.Entrypoint, wantEntrypoint)
 	}
 	if !slices.Equal(cfg.Config.Cmd, []string{"--server.port=8080"}) {
 		t.Fatalf("cmd = %#v", cfg.Config.Cmd)

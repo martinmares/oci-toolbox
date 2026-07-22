@@ -154,7 +154,7 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 | `--debug` | Zapne podrobný výstup |
 | `--batch-file cesta/k/images.yml` | Spustí více copy jobů ze YAML souboru |
 | `--continue-on-error` | V batch režimu pokračuje další položkou po selhání |
-| `--wrap-entrypoint` | Zapne entrypoint wrapper pro všechny kroky `shadow` v načtených recipe |
+| `--wrap-entrypoint` | Pro všechny kroky `shadow` obalí ENTRYPOINT a CMD z CLI image `SOURCE`; vhodné s `use-base` |
 | `--no-wrap-entrypoint` | Vypne entrypoint wrapper pro všechny kroky `shadow` v načtených recipe |
 | `--dest-tag tag` | Přidá další cílový tag ve stejném repository bez opakovaného kopírování vrstev (lze opakovat) |
 | `--dest-no-reuse` | Zakáže cross-repository blob mount/reuse v cíli (fallback při problémech) |
@@ -550,7 +550,7 @@ steps:
 
 **`shadow`** — Zabalí strom souborů do šifrované self-extracting binárky a původní cestu v image nahradí touto bootstrap binárkou. Výchozí chování nemění startovací metadata image. S `wrap-entrypoint: true` obalí původní `ENTRYPOINT`: před startem původního procesu spustí `/bin/sh` příkaz `app.self -cleanup`, který soubory obnoví a bootstrap smaže. Původní `ENTRYPOINT` i `CMD` zůstávají zachované. Bez `from:` čte z aktuální pracovní image, s `from:` může číst z jiné pojmenované source image a zapisovat do aktuální image. Pro wrapper musí cílová image obsahovat `/bin/sh`.
 
-Nedávej `set-entrypoint` až za `shadow` s `wrap-entrypoint: true`, protože by wrapper přepsal. Vlastní `set-entrypoint` umísti před `shadow`. CLI flagy `--wrap-entrypoint` a `--no-wrap-entrypoint` přepíší všechny kroky v recipe a nelze je kombinovat.
+Nedávej `set-entrypoint` až za `shadow` s `wrap-entrypoint: true`, protože by wrapper přepsal. Vlastní `set-entrypoint` umísti před `shadow`. CLI flagy `--wrap-entrypoint` a `--no-wrap-entrypoint` přepíší všechny kroky v recipe a nelze je kombinovat. `--wrap-entrypoint` navíc před obalením převezme `Entrypoint` a `Cmd` z CLI image `SOURCE`; díky tomu zůstane při přepnutí na runtime image přes `use-base` zachovaný startovací příkaz aplikace.
 
 ```yaml
 - action: shadow
