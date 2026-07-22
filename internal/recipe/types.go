@@ -68,7 +68,7 @@ type Step struct {
 	// shadow
 	ShadowExtractTo      string `yaml:"extract-to"`      // where to unpack at container runtime
 	ShadowOutput         string `yaml:"output"`          // destination path in image (default /app/app.self)
-	ShadowWrapEntrypoint *bool  `yaml:"wrap-entrypoint"` // default true; run app.self before the original command
+	ShadowWrapEntrypoint *bool  `yaml:"wrap-entrypoint"` // default false; run app.self before the original command
 
 	// Condition (optional)
 	Condition *Condition `yaml:"condition"`

@@ -154,7 +154,8 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 | `--debug` | Enable verbose output |
 | `--batch-file path/to/images.yml` | Run multiple copy jobs from a YAML file |
 | `--continue-on-error` | Continue batch processing after a copy fails |
-| `--no-wrap-entrypoint` | Disable the automatic entrypoint wrapper for every `shadow` step in the supplied recipes |
+| `--wrap-entrypoint` | Wrap the original entrypoint for every `shadow` step in the supplied recipes |
+| `--no-wrap-entrypoint` | Disable entrypoint wrapping for every `shadow` step in the supplied recipes |
 | `--dest-tag tag` | Add an extra destination tag in the same repository without copying layers again (repeatable) |
 | `--dest-no-reuse` | Disable cross-repository blob mount/reuse at destination (retry fallback) |
 | `--reduce` | Materialize the final filesystem into a single minimal layer |
@@ -547,11 +548,9 @@ steps:
 
 `use-base` is the declarative equivalent of switching to a new `FROM alpine-base` in the middle of a multi-stage Dockerfile. Before that step, the recipe works on the image passed on the CLI. After `use-base`, the current working image becomes the selected source and later steps write into that image. If you still need files from the original source image, declare it in `sources` with `ref: "{{.SourceImage}}"` and use `from: original` on steps such as `copy-file-from` or `shadow`.
 
-**`shadow`** — Pack a file tree into an encrypted self-extracting binary and replace the original path with that bootstrap binary. It also wraps the original `ENTRYPOINT`: before starting the original process, `/bin/sh` runs `app.self -cleanup`, which restores the files and removes the bootstrap. The original `ENTRYPOINT` and `CMD` are preserved. By default it reads from the current working image; with `from:` it can read from another named source while writing into the current image. The target image must provide `/bin/sh`.
+**`shadow`** — Pack a file tree into an encrypted self-extracting binary and replace the original path with that bootstrap binary. It leaves image startup metadata unchanged by default. Set `wrap-entrypoint: true` to wrap the original `ENTRYPOINT`: before starting the original process, `/bin/sh` runs `app.self -cleanup`, which restores the files and removes the bootstrap. The original `ENTRYPOINT` and `CMD` are preserved. By default it reads from the current working image; with `from:` it can read from another named source while writing into the current image. Entry-point wrapping requires `/bin/sh` in the target image.
 
-Do not add `set-entrypoint` after `shadow`, because it would replace this wrapper. Put a custom `set-entrypoint` before `shadow` instead.
-
-Set `wrap-entrypoint: false` to leave the image startup metadata unchanged. In that case, the deployment must run `app.self -cleanup` itself before starting the application.
+Do not add `set-entrypoint` after a `shadow` step with `wrap-entrypoint: true`, because it would replace the wrapper. Put a custom `set-entrypoint` before `shadow` instead. The CLI flags `--wrap-entrypoint` and `--no-wrap-entrypoint` override every recipe step and cannot be combined.
 
 ```yaml
 - action: shadow
@@ -569,12 +568,12 @@ Set `wrap-entrypoint: false` to leave the image startup metadata unchanged. In t
 ```
 
 ```yaml
-# Leave Entrypoint and Cmd unchanged; start app.self from the deployment instead.
+# Run app.self before the original Entrypoint and Cmd.
 - action: shadow
   path: /app
   extract-to: /app
   output: /app/app.self
-  wrap-entrypoint: false
+  wrap-entrypoint: true
 ```
 
 #### Metadata

@@ -624,6 +624,7 @@ steps:
     path: /app
     extract-to: /app
     output: /app/app.self
+    wrap-entrypoint: true
   - action: fix-permissions
     path: /app
     owner: "1001:0"
@@ -719,6 +720,21 @@ steps:
 	if !slices.Equal(cfg.Config.Cmd, []string{"--server.port=8080"}) {
 		t.Fatalf("cmd = %#v", cfg.Config.Cmd)
 	}
+
+	reduced, err := image.ReduceToBase(baseImg, result)
+	if err != nil {
+		t.Fatalf("ReduceToBase: %v", err)
+	}
+	reducedCfg, err := reduced.ConfigFile()
+	if err != nil {
+		t.Fatalf("reduced ConfigFile: %v", err)
+	}
+	if !slices.Equal(reducedCfg.Config.Entrypoint, wantEntrypoint) {
+		t.Fatalf("reduced entrypoint = %#v, want %#v", reducedCfg.Config.Entrypoint, wantEntrypoint)
+	}
+	if !slices.Equal(reducedCfg.Config.Cmd, []string{"--server.port=8080"}) {
+		t.Fatalf("reduced cmd = %#v", reducedCfg.Config.Cmd)
+	}
 }
 
 func TestShadowReduceKeepsOnlyBootstrap(t *testing.T) {
@@ -775,7 +791,7 @@ steps:
 	}
 }
 
-func TestRecipe_shadowCanSkipEntrypointWrapper(t *testing.T) {
+func TestRecipe_shadowKeepsEntrypointByDefault(t *testing.T) {
 	img := testutil.NewImageWithFiles(t, map[string][]byte{
 		"app/app.jar": []byte("application"),
 	})
@@ -795,7 +811,6 @@ steps:
     path: /app
     extract-to: /app
     output: /app/app.self
-    wrap-entrypoint: false
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)

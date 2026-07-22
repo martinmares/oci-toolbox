@@ -34,6 +34,7 @@ var (
 	reduceChanges    bool
 	batchFile        string
 	continueOnError  bool
+	wrapEntrypoint   bool
 	noWrapEntrypoint bool
 	srcInsecure      bool
 	destInsecure     bool
@@ -64,7 +65,8 @@ func init() {
 	copyCmd.Flags().BoolVar(&reduceChanges, "reduce-changes", false, "preserve base layers and reduce recipe changes into one delta layer")
 	copyCmd.Flags().StringVar(&batchFile, "batch-file", "", "YAML file with copy jobs to run sequentially")
 	copyCmd.Flags().BoolVar(&continueOnError, "continue-on-error", false, "continue batch processing after a copy fails")
-	copyCmd.Flags().BoolVar(&noWrapEntrypoint, "no-wrap-entrypoint", false, "do not wrap the original entrypoint for shadow recipe steps")
+	copyCmd.Flags().BoolVar(&wrapEntrypoint, "wrap-entrypoint", false, "wrap the original entrypoint for all shadow recipe steps")
+	copyCmd.Flags().BoolVar(&noWrapEntrypoint, "no-wrap-entrypoint", false, "do not wrap the original entrypoint for any shadow recipe step")
 	copyCmd.Flags().BoolVar(&srcInsecure, "src-insecure", false, "skip TLS certificate verification for source registry")
 	copyCmd.Flags().BoolVar(&destInsecure, "dest-insecure", false, "skip TLS certificate verification for destination registry")
 	copyCmd.Flags().StringArrayVar(&destTags, "dest-tag", nil, "additional destination tag in the same repository (may be specified multiple times)")
@@ -118,6 +120,9 @@ func runCopy(_ *cobra.Command, args []string) error {
 	}
 	if reducelayers && reduceChanges {
 		return fmt.Errorf("--reduce and --reduce-changes cannot be used together")
+	}
+	if err := validateShadowEntrypointFlags(wrapEntrypoint, noWrapEntrypoint); err != nil {
+		return err
 	}
 
 	if debugMode && !showProgress {
@@ -457,8 +462,8 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 			closeProg(srcCh, dstCh)
 			return err
 		}
-		if noWrapEntrypoint {
-			disableShadowEntrypointWrapping(r)
+		if wrapEntrypoint || noWrapEntrypoint {
+			setShadowEntrypointWrapping(r, wrapEntrypoint)
 		}
 
 		if !showProgress {
@@ -690,13 +695,19 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 	return nil
 }
 
-func disableShadowEntrypointWrapping(r *recipe.Recipe) {
-	disabled := false
+func setShadowEntrypointWrapping(r *recipe.Recipe, enabled bool) {
 	for i := range r.Steps {
 		if r.Steps[i].Action == "shadow" {
-			r.Steps[i].ShadowWrapEntrypoint = &disabled
+			r.Steps[i].ShadowWrapEntrypoint = &enabled
 		}
 	}
+}
+
+func validateShadowEntrypointFlags(wrap, noWrap bool) error {
+	if wrap && noWrap {
+		return fmt.Errorf("--wrap-entrypoint and --no-wrap-entrypoint cannot be used together")
+	}
+	return nil
 }
 
 func tagAdditionalDestTags(dst name.Reference, img v1.Image, opts []remote.Option, tags []string, setPhase func(string), jsonEmitter *progress.JSONEmitter) error {

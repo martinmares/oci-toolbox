@@ -154,7 +154,8 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 | `--debug` | Zapne podrobný výstup |
 | `--batch-file cesta/k/images.yml` | Spustí více copy jobů ze YAML souboru |
 | `--continue-on-error` | V batch režimu pokračuje další položkou po selhání |
-| `--no-wrap-entrypoint` | Vypne automatický entrypoint wrapper pro všechny kroky `shadow` v načtených recipe |
+| `--wrap-entrypoint` | Zapne entrypoint wrapper pro všechny kroky `shadow` v načtených recipe |
+| `--no-wrap-entrypoint` | Vypne entrypoint wrapper pro všechny kroky `shadow` v načtených recipe |
 | `--dest-tag tag` | Přidá další cílový tag ve stejném repository bez opakovaného kopírování vrstev (lze opakovat) |
 | `--dest-no-reuse` | Zakáže cross-repository blob mount/reuse v cíli (fallback při problémech) |
 | `--reduce` | Materializuje finální filesystem do jediné minimální vrstvy |
@@ -547,11 +548,9 @@ steps:
 
 `use-base` je deklarativní obdoba `FROM alpine-base` uprostřed multi-stage Dockerfile. Do té chvíle recipe pracuje s image předanou na CLI. Po `use-base` se aktuální pracovní image přepne na zvolený zdroj a další kroky zapisují už do něj. Když potřebuješ po přepnutí vzít soubor z původní source image, dej původní image do `sources` jako `ref: "{{.SourceImage}}"` a použij `from: original` u kroků jako `copy-file-from` nebo `shadow`.
 
-**`shadow`** — Zabalí strom souborů do šifrované self-extracting binárky a původní cestu v image nahradí touto bootstrap binárkou. Současně obalí původní `ENTRYPOINT`: před startem původního procesu spustí `/bin/sh` příkaz `app.self -cleanup`, který soubory obnoví a bootstrap smaže. Původní `ENTRYPOINT` i `CMD` zůstávají zachované. Bez `from:` čte z aktuální pracovní image, s `from:` může číst z jiné pojmenované source image a zapisovat do aktuální image. Cílová image musí obsahovat `/bin/sh`.
+**`shadow`** — Zabalí strom souborů do šifrované self-extracting binárky a původní cestu v image nahradí touto bootstrap binárkou. Výchozí chování nemění startovací metadata image. S `wrap-entrypoint: true` obalí původní `ENTRYPOINT`: před startem původního procesu spustí `/bin/sh` příkaz `app.self -cleanup`, který soubory obnoví a bootstrap smaže. Původní `ENTRYPOINT` i `CMD` zůstávají zachované. Bez `from:` čte z aktuální pracovní image, s `from:` může číst z jiné pojmenované source image a zapisovat do aktuální image. Pro wrapper musí cílová image obsahovat `/bin/sh`.
 
-Nedávej `set-entrypoint` až za `shadow`, protože by wrapper přepsal. Vlastní `set-entrypoint` umísti před `shadow`.
-
-Pro zachování startovacích metadat image použij `wrap-entrypoint: false`. Pak musí deployment před startem aplikace spustit `app.self -cleanup` sám.
+Nedávej `set-entrypoint` až za `shadow` s `wrap-entrypoint: true`, protože by wrapper přepsal. Vlastní `set-entrypoint` umísti před `shadow`. CLI flagy `--wrap-entrypoint` a `--no-wrap-entrypoint` přepíší všechny kroky v recipe a nelze je kombinovat.
 
 ```yaml
 - action: shadow
@@ -569,12 +568,12 @@ Pro zachování startovacích metadat image použij `wrap-entrypoint: false`. Pa
 ```
 
 ```yaml
-# Nechá Entrypoint a Cmd beze změny; app.self pak musí spustit deployment.
+# Spustí app.self před původním Entrypoint a Cmd.
 - action: shadow
   path: /app
   extract-to: /app
   output: /app/app.self
-  wrap-entrypoint: false
+  wrap-entrypoint: true
 ```
 
 #### Metadata
