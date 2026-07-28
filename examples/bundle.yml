@@ -1,0 +1,35 @@
+name: stable
+description: Stable application bundle
+
+registries:
+  source:
+    url: registry-source.example.com
+  target:
+    url: registry-release.example.com
+    project: release
+
+extra_tags:
+  - stable
+
+images:
+  - id: config
+    source:
+      repository: team/config
+      tag: 2.3-latest
+    target:
+      repository: config
+    deployment:
+      app_name: config
+      container_name: config
+
+  - id: diagnostics
+    source:
+      repository: tools/diagnostics
+      digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    target:
+      repository: diagnostics
+    deployment:
+      app_name: web
+      container_name: diagnostics
+    extra_tags:
+      - diagnostics-stable

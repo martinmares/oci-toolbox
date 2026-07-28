@@ -1,0 +1,10 @@
+images:
+  - ref: registry.example.com/release/config:RE_2026.07.28.01
+    id: config
+    app_name: config
+    container_name: config
+
+  - ref: registry.example.com/release/diagnostics:RE_2026.07.28.01
+    id: diagnostics
+    app_name: web
+    container_name: diagnostics
