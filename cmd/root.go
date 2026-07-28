@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/martinmares/oci-patch/internal/logging"
+	"github.com/martinmares/oci-toolbox/internal/logging"
 )
 
 const defaultVersion = "0.1.0"
@@ -19,11 +19,11 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "oci-patch",
-	Short: "OCI image transfer and patching tool",
-	Long: `oci-patch copies OCI images between registries and applies recipes
-to modify the image in-flight — without requiring a Docker daemon.`,
-	// --version flag (skopeo-compatible: prints "oci-patch version X.Y.Z")
+	Use:   "oci-toolbox",
+	Short: "Toolbox for inspecting, transferring, and modifying OCI images",
+	Long: `oci-toolbox inspects and transfers OCI images and applies recipes
+to modify them in-flight — without requiring a Docker daemon.`,
+	// --version flag (skopeo-compatible: prints "oci-toolbox version X.Y.Z")
 	Version:      version,
 	SilenceUsage: true,
 }
@@ -37,7 +37,7 @@ func SetVersion(value string) {
 }
 
 func init() {
-	rootCmd.SetVersionTemplate("oci-patch version {{.Version}}\n")
+	rootCmd.SetVersionTemplate("oci-toolbox version {{.Version}}\n")
 	logging.Setup(slog.LevelInfo)
 }
 

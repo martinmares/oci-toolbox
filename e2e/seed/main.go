@@ -34,7 +34,7 @@ func main() {
 
 	buf := &bytes.Buffer{}
 	tw := tar.NewWriter(buf)
-	content := []byte("oci-patch e2e fixture\n")
+	content := []byte("oci-toolbox e2e fixture\n")
 	hdr := &tar.Header{
 		Name:     "fixture.txt",
 		Size:     int64(len(content)),

@@ -25,11 +25,11 @@ func init() {
 func writeExamples(w io.Writer, color bool) error {
 	section(w, "Quick copy", color)
 	codeBlock(w, `# Copy an image unchanged.
-oci-patch copy docker://registry.example.com/team/app:1.2 docker://registry.example.com/team/app:1.2-copy`, color)
+oci-toolbox copy docker://registry.example.com/team/app:1.2 docker://registry.example.com/team/app:1.2-copy`, color)
 
 	section(w, "Batch copy", color)
 	codeBlock(w, `# Copy every image listed in images.yml. Both registries use an insecure TLS connection.
-oci-patch copy --batch-file images.yml --src-insecure --dest-insecure`, color)
+oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure`, color)
 	fmt.Fprintln(w)
 	codeBlock(w, `# images.yml
 copy:
@@ -68,7 +68,7 @@ steps:
 
 # Keep base-image layers and make all recipe changes one delta layer.
 # src can instead use ./target/uberjar/*SNAPSHOT.jar when it matches exactly one JAR; dst: /app/ then preserves its filename.
-oci-patch copy --recipe app.yml --reduce-changes docker://registry.example.com/team/app:1.2 docker://registry.example.com/team/app:patched`, color)
+oci-toolbox copy --recipe app.yml --reduce-changes docker://registry.example.com/team/app:1.2 docker://registry.example.com/team/app:patched`, color)
 
 	section(w, "Replace a tool and configuration", color)
 	codeBlock(w, `# patch-tools.yml: replace every existing tool named encjson, copy a configuration tree, and remove obsolete content.
@@ -93,7 +93,7 @@ steps:
     condition:
       if-not-exists-in: [/bin, /usr/bin, /usr/local/bin]
 
-oci-patch copy --recipe patch-tools.yml SOURCE DEST`, color)
+oci-toolbox copy --recipe patch-tools.yml SOURCE DEST`, color)
 
 	section(w, "Rebase onto another image", color)
 	codeBlock(w, `# rebase.yml: take application files from the CLI source, then write them onto a clean runtime image.
@@ -117,7 +117,7 @@ steps:
   - action: set-entrypoint
     value_list: ["java", "-jar", "/app/myapp.jar"]
 
-oci-patch copy --recipe rebase.yml --reduce-changes SOURCE DEST`, color)
+oci-toolbox copy --recipe rebase.yml --reduce-changes SOURCE DEST`, color)
 
 	section(w, "Unpack or extract an artifact", color)
 	codeBlock(w, `# artifacts.yml: unzip a JAR already in the image and also write one source file to the local machine.
@@ -134,7 +134,7 @@ steps:
     src: /app/myapp.jar
     dst-local: ./artifacts/myapp.jar
 
-oci-patch copy --recipe artifacts.yml SOURCE DEST`, color)
+oci-toolbox copy --recipe artifacts.yml SOURCE DEST`, color)
 
 	section(w, "Protect an application directory", color)
 	codeBlock(w, `# shadow.yml: replace /app with a self-extracting encrypted bootstrap.
@@ -151,15 +151,15 @@ steps:
     setgid-dirs: true
 
 # --reduce creates one final filesystem layer; use it when the smallest individual image matters.
-oci-patch copy --recipe shadow.yml --reduce SOURCE DEST`, color)
+oci-toolbox copy --recipe shadow.yml --reduce SOURCE DEST`, color)
 
 	section(w, "Inspect image contents", color)
-	codeBlock(w, `oci-patch inspect docker://registry.example.com/team/app:latest
-oci-patch tree docker://registry.example.com/team/app:latest /app
-oci-patch cat docker://registry.example.com/team/app:latest /app/app.jar`, color)
+	codeBlock(w, `oci-toolbox inspect docker://registry.example.com/team/app:latest
+oci-toolbox tree docker://registry.example.com/team/app:latest /app
+oci-toolbox cat docker://registry.example.com/team/app:latest /app/app.jar`, color)
 
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Run 'oci-patch <command> --help' for all flags. Full reference: README.md")
+	fmt.Fprintln(w, "Run 'oci-toolbox <command> --help' for all flags. Full reference: README.md")
 	return nil
 }
 
@@ -185,7 +185,7 @@ func highlightExampleLine(line string, color bool) string {
 	if strings.HasPrefix(trimmed, "#") {
 		return ansiBlue + line + ansiReset
 	}
-	if strings.HasPrefix(trimmed, "oci-patch ") {
+	if strings.HasPrefix(trimmed, "oci-toolbox ") {
 		return ansiGreen + line + ansiReset
 	}
 	if key, value, ok := strings.Cut(trimmed, ": "); ok {

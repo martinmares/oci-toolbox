@@ -1,4 +1,4 @@
-// Package shadow implements the oci-patch shadow action:
+// Package shadow implements the oci-toolbox shadow action:
 // it packs a path inside an image into a tar.gz archive, encrypts it as a
 // chunked AES-256-GCM payload, then produces a self-extracting static binary
 // (app.self) that unpacks the content at runtime inside the container.
@@ -25,11 +25,11 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/martinmares/oci-patch/internal/image"
+	"github.com/martinmares/oci-toolbox/internal/image"
 )
 
 // embeddedExtractors contains the static extractors injected into target images
-// by the shadow recipe. It is embedded in the oci-patch binary; shadow therefore
+// by the shadow recipe. It is embedded in the oci-toolbox binary; shadow therefore
 // has no source-tree, Go toolchain, or runtime path dependency.
 //
 //go:embed embedded-extractor-*

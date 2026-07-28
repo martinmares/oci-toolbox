@@ -15,7 +15,7 @@ func TestWriteExamplesPlain(t *testing.T) {
 	got := output.String()
 	for _, want := range []string{
 		"Batch copy",
-		"oci-patch copy --batch-file images.yml --src-insecure --dest-insecure",
+		"oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure",
 		"# images.yml",
 		"  - src: registry.example.com/team/config:release-1.0",
 		"    dest: registry.example.com/team/ticket:test-latest",
@@ -43,7 +43,7 @@ func TestWriteExamplesColor(t *testing.T) {
 	}
 
 	got := output.String()
-	for _, want := range []string{ansiBold + ansiCyan + "Quick copy", ansiGreen + "oci-patch copy", ansiYellow + "src:"} {
+	for _, want := range []string{ansiBold + ansiCyan + "Quick copy", ansiGreen + "oci-toolbox copy", ansiYellow + "src:"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("color output does not contain %q", want)
 		}

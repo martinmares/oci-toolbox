@@ -8,9 +8,9 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
-	"github.com/martinmares/oci-patch/internal/image"
-	"github.com/martinmares/oci-patch/internal/recipe"
-	"github.com/martinmares/oci-patch/internal/testutil"
+	"github.com/martinmares/oci-toolbox/internal/image"
+	"github.com/martinmares/oci-toolbox/internal/recipe"
+	"github.com/martinmares/oci-toolbox/internal/testutil"
 )
 
 const shadowEntrypointScriptForTest = `bootstrap="$1"
@@ -387,7 +387,7 @@ steps:
     value: "true"
   - action: set-label
     key: patched-by
-    value: oci-patch
+    value: oci-toolbox
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -412,7 +412,7 @@ steps:
 	if !foundEnv {
 		t.Error("TOOLS_READY=true not in env")
 	}
-	if cfg.Config.Labels["patched-by"] != "oci-patch" {
+	if cfg.Config.Labels["patched-by"] != "oci-toolbox" {
 		t.Errorf("label: %v", cfg.Config.Labels)
 	}
 }
@@ -716,7 +716,7 @@ steps:
 		"/bin/sh",
 		"-c",
 		"bootstrap=\"$1\"\nif [ -x \"$bootstrap\" ]; then\n  cd \"$(dirname \"$bootstrap\")\" || exit $?\n  \"$bootstrap\" -cleanup || exit $?\nfi\nshift\nexec \"$@\"",
-		"oci-patch-shadow",
+		"oci-toolbox-shadow",
 		"/app/app.self",
 		"java",
 		"-jar",
@@ -909,7 +909,7 @@ steps:
 		t.Fatalf("ConfigFile: %v", err)
 	}
 	wantEntrypoint := []string{
-		"/bin/sh", "-c", shadowEntrypointScriptForTest, "oci-patch-shadow", "/app/app.self",
+		"/bin/sh", "-c", shadowEntrypointScriptForTest, "oci-toolbox-shadow", "/app/app.self",
 		"java", "-jar", "/app/app.jar",
 	}
 	if !slices.Equal(cfg.Config.Entrypoint, wantEntrypoint) {

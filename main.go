@@ -4,7 +4,7 @@ import (
 	_ "embed"
 	"strings"
 
-	"github.com/martinmares/oci-patch/cmd"
+	"github.com/martinmares/oci-toolbox/cmd"
 )
 
 //go:embed VERSION

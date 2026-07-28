@@ -1,14 +1,14 @@
-# oci-patch
+# oci-toolbox
 
 **Nástroj pro přenos a úpravu OCI image — bez Docker daemona.**
 
-`oci-patch` kopíruje container image mezi registry (podobně jako `skopeo`) a navíc při přenosu aplikuje deklarativní *recipe*, které image upravují — přidávají soubory, přepisují metadata, mění base image a podobně. Vše běží jako jediná statická binárka bez jakýchkoli runtime závislostí.
+`oci-toolbox` kopíruje container image mezi registry (podobně jako `skopeo`) a navíc při přenosu aplikuje deklarativní *recipe*, které image upravují — přidávají soubory, přepisují metadata, mění base image a podobně. Vše běží jako jediná statická binárka bez jakýchkoli runtime závislostí.
 
 ---
 
 ## Obsah
 
-- [Proč oci-patch](#proč-oci-patch)
+- [Proč oci-toolbox](#proč-oci-toolbox)
 - [Srovnání se skopeo](#srovnání-se-skopeo)
 - [Instalace](#instalace)
 - [Příkazy](#příkazy)
@@ -29,7 +29,7 @@
 
 ---
 
-## Proč oci-patch
+## Proč oci-toolbox
 
 Typický postup pro úpravu container image dnes vypadá takto:
 
@@ -40,15 +40,15 @@ docker build -f Dockerfile.patch .  # sestavení upraveného image
 docker push patched-image
 ```
 
-To vyžaduje běžící Docker daemon, Dockerfile a mezikontejnery. `oci-patch` celý tento postup nahradí jediným příkazem s YAML recipe — žádný daemon, žádný Dockerfile, žádné mezikontejnery, žádná binárka `docker`.
+To vyžaduje běžící Docker daemon, Dockerfile a mezikontejnery. `oci-toolbox` celý tento postup nahradí jediným příkazem s YAML recipe — žádný daemon, žádný Dockerfile, žádné mezikontejnery, žádná binárka `docker`.
 
 ---
 
 ## Srovnání se skopeo
 
-`oci-patch` je **záměrně CLI-kompatibilní** se `skopeo` pro příkazy, které implementuje (`copy`, `inspect`, `--version`). Stačí nahradit binárku `skopeo` za `oci-patch` — stávající skripty fungují beze změny argumentů.
+`oci-toolbox` je **záměrně CLI-kompatibilní** se `skopeo` pro příkazy, které implementuje (`copy`, `inspect`, `--version`). Stačí nahradit binárku `skopeo` za `oci-toolbox` — stávající skripty fungují beze změny argumentů.
 
-| Funkce | skopeo | oci-patch |
+| Funkce | skopeo | oci-toolbox |
 |--------|--------|-----------|
 | Kopie image mezi registry | ✅ | ✅ |
 | Inspect metadat image (JSON) | ✅ | ✅ |
@@ -82,11 +82,11 @@ To vyžaduje běžící Docker daemon, Dockerfile a mezikontejnery. `oci-patch` 
 
 **1. Úprava image při přenosu**
 
-`skopeo copy` je čistě přenosový nástroj — přesune data z A do B. `oci-patch copy` image při průchodu modifikuje: stáhne vrstvy, aplikuje kroky z recipe (každý krok přidá novou OCI vrstvu nebo přepíše config image), výsledek pushne. Původní image zůstane nedotčen.
+`skopeo copy` je čistě přenosový nástroj — přesune data z A do B. `oci-toolbox copy` image při průchodu modifikuje: stáhne vrstvy, aplikuje kroky z recipe (každý krok přidá novou OCI vrstvu nebo přepíše config image), výsledek pushne. Původní image zůstane nedotčen.
 
 **2. Žádný `RUN` — záměrně**
 
-Spouštění příkazů uvnitř kontejneru při buildu (jako `apk upgrade`, `adduser`) vyžaduje container runtime (runc, crun nebo buildkit). `oci-patch` tuto funkcionalitu záměrně vynechává, aby zůstal statickou binárkou bez závislostí. Vše co dělá je čistá manipulace s vrstvami a configem image v paměti.
+Spouštění příkazů uvnitř kontejneru při buildu (jako `apk upgrade`, `adduser`) vyžaduje container runtime (runc, crun nebo buildkit). `oci-toolbox` tuto funkcionalitu záměrně vynechává, aby zůstal statickou binárkou bez závislostí. Vše co dělá je čistá manipulace s vrstvami a configem image v paměti.
 
 **3. Multi-source kompozice**
 
@@ -101,7 +101,7 @@ Krok může být podmíněn pomocí `condition: if-not-exists: /cesta` — pokud
 Všechny flagy používané v nejběžnějších skopeo workflow jsou podporovány se stejnými názvy:
 
 ```bash
-# skopeo příkazy fungují identicky jako oci-patch
+# skopeo příkazy fungují identicky jako oci-toolbox
 skopeo inspect --creds user:pass docker://registry.example.com/app:latest
 skopeo copy --src-creds u:p --dest-creds u:p docker://src/img:tag docker://dst/img:tag
 skopeo copy --debug --dest-no-reuse docker://src docker://dst
@@ -113,15 +113,15 @@ skopeo --version
 ## Instalace
 
 ```bash
-git clone https://github.com/martinmares/oci-patch
-cd oci-patch
-go build -o oci-patch .
+git clone https://github.com/martinmares/oci-toolbox
+cd oci-toolbox
+go build -o oci-toolbox .
 ```
 
 Cross-kompilace pro Linux amd64:
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o oci-patch-linux-amd64 .
+GOOS=linux GOARCH=amd64 go build -o oci-toolbox-linux-amd64 .
 ```
 
 S nástrojem [just](https://just.systems/) se lokální binárky ve stejném stylu jako release zapisují do `dist/`:
@@ -139,7 +139,7 @@ just build-windows
 ### copy
 
 ```
-oci-patch copy [flagy] ZDROJ CÍL
+oci-toolbox copy [flagy] ZDROJ CÍL
 ```
 
 Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recipe.
@@ -167,17 +167,17 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 
 ```bash
 # Jednoduchá kopie bez recipe
-oci-patch copy docker://registry.example.com/app:1.0 docker://registry.example.com/app:1.0-copy
+oci-toolbox copy docker://registry.example.com/app:1.0 docker://registry.example.com/app:1.0-copy
 
 # Kopie s credentials
-oci-patch copy \
+oci-toolbox copy \
   --src-creds srcuser:srcpass \
   --dest-creds dstuser:dstpass \
   docker://src.registry.com/app:2.3-latest \
   docker://dst.registry.com/app:2026.04.17.01
 
 # Jedna kopie a další cílové tagy pro stejný manifest
-oci-patch copy \
+oci-toolbox copy \
   --dest-creds dstuser:dstpass \
   --dest-tag latest \
   --dest-tag stable \
@@ -185,7 +185,7 @@ oci-patch copy \
   docker://dst.registry.com/app:2026.04.17.01
 
 # Kopie s recipe (injekce nástroje)
-oci-patch copy \
+oci-toolbox copy \
   --src-creds user:pass \
   --dest-creds user:pass \
   --recipe inject-tool.yml \
@@ -193,25 +193,25 @@ oci-patch copy \
   docker://registry.example.com/app:patched
 
 # Více recipe aplikovaných v pořadí
-oci-patch copy \
+oci-toolbox copy \
   --recipe recipe-1.yml \
   --recipe recipe-2.yml \
   docker://src/app:tag \
   docker://dst/app:tag
 
 # Zdroj podle digestu (SHA256)
-oci-patch copy \
+oci-toolbox copy \
   --src-creds user:pass \
   docker://registry.example.com/app@sha256:abc123... \
   docker://registry.example.com/app:stable
 
 # Fallback s --dest-no-reuse při chybě blob reuse
-oci-patch copy --debug --dest-no-reuse \
+oci-toolbox copy --debug --dest-no-reuse \
   --src-creds user:pass --dest-creds user:pass \
   docker://src/app:tag docker://dst/app:tag
 
 # Machine-readable progress pro integrace
-oci-patch copy --progress-json \
+oci-toolbox copy --progress-json \
   docker://src/app:tag docker://dst/app:tag
 ```
 
@@ -232,7 +232,7 @@ copy:
 ```
 
 ```bash
-oci-patch copy \
+oci-toolbox copy \
   --batch-file images.yml \
   --src-insecure \
   --dest-insecure \
@@ -246,7 +246,7 @@ Primární klíče v batch souboru jsou `src` a `dest`, stejně jako CLI flagy `
 ### inspect
 
 ```
-oci-patch inspect [flagy] IMAGE
+oci-toolbox inspect [flagy] IMAGE
 ```
 
 Stáhne a zobrazí metadata image jako JSON (formát kompatibilní se skopeo).
@@ -266,22 +266,22 @@ Stáhne a zobrazí metadata image jako JSON (formát kompatibilní se skopeo).
 
 ```bash
 # Základní inspect
-oci-patch inspect docker://docker.io/library/alpine:3.21
+oci-toolbox inspect docker://docker.io/library/alpine:3.21
 
 # S credentials
-oci-patch inspect --creds user:pass docker://registry.example.com/app:latest
+oci-toolbox inspect --creds user:pass docker://registry.example.com/app:latest
 
 # Registry s nestandardním/self-signed certifikátem
-oci-patch inspect --src-insecure docker://registry.example.com/app:latest
+oci-toolbox inspect --src-insecure docker://registry.example.com/app:latest
 
 # Konkrétní platforma z multi-arch indexu
-oci-patch inspect \
+oci-toolbox inspect \
   --override-os linux \
   --override-arch arm64 \
   docker://docker.io/library/alpine:3.21
 
 # Rychlý inspect bez načítání tagů
-oci-patch inspect --no-tags docker://registry.example.com/app:latest
+oci-toolbox inspect --no-tags docker://registry.example.com/app:latest
 ```
 
 **Formát výstupu** (kompatibilní se skopeo):
@@ -312,7 +312,7 @@ oci-patch inspect --no-tags docker://registry.example.com/app:latest
 ### cat
 
 ```
-oci-patch cat [flagy] IMAGE CESTA
+oci-toolbox cat [flagy] IMAGE CESTA
 ```
 
 Stáhne image a vypíše jeden běžný soubor z filesystemu image na stdout.
@@ -333,19 +333,19 @@ Pokud soubor neexistuje, `cat` skončí úspěšně a nevypíše nic. S `--debug
 **Příklady:**
 
 ```bash
-oci-patch cat \
+oci-toolbox cat \
   --src-insecure \
   docker://registry.example.com/team/gateway:2.2-test-latest \
   /app/resources/git.properties
 
 # Chybějící soubory jsou tiché, pokud nepoužiješ --debug
-oci-patch cat --debug docker://registry.example.com/app:latest /missing/file
+oci-toolbox cat --debug docker://registry.example.com/app:latest /missing/file
 ```
 
 ### ls
 
 ```
-oci-patch ls [flagy] IMAGE CESTA
+oci-toolbox ls [flagy] IMAGE CESTA
 ```
 
 Vypíše položky pod zadanou cestou v image. Chybějící cesta je defaultně tichá a warning se zobrazí jen s `--debug`.
@@ -364,13 +364,13 @@ Vypíše položky pod zadanou cestou v image. Chybějící cesta je defaultně t
 **Příklad:**
 
 ```bash
-oci-patch ls --src-insecure docker://registry.example.com/app:latest /app/resources
+oci-toolbox ls --src-insecure docker://registry.example.com/app:latest /app/resources
 ```
 
 ### tree
 
 ```
-oci-patch tree [flagy] IMAGE CESTA
+oci-toolbox tree [flagy] IMAGE CESTA
 ```
 
 Vypíše strom pod zadanou cestou. Chybějící cesta je defaultně tichá a warning se zobrazí jen s `--debug`.
@@ -389,25 +389,25 @@ Vypíše strom pod zadanou cestou. Chybějící cesta je defaultně tichá a war
 **Příklad:**
 
 ```bash
-oci-patch tree --src-insecure docker://registry.example.com/app:latest /app
+oci-toolbox tree --src-insecure docker://registry.example.com/app:latest /app
 ```
 
 ### Příkaz examples
 
 ```
-oci-patch examples
+oci-toolbox examples
 ```
 
 Vypíše přímo v terminálu kuchařku příkazů: běžné kopírování image, batch copy včetně kompletní struktury `images.yml` a kompletní recipe pro Java aplikaci, patch nástrojů a konfigurace, rebasing, extrakci artifactu, rozbalení archivu, `shadow`, práva, metadata a redukci vrstev.
 
 ```bash
-oci-patch examples
+oci-toolbox examples
 
 # Ekvivalentní forma přes Cobra help:
-oci-patch help examples
+oci-toolbox help examples
 ```
 
-Pokud výstup míří do terminálu, příkazy, YAML klíče, komentáře a nadpisy jsou barevně zvýrazněné. Při pipe nebo přesměrování se vypíše čistý text, takže funguje i `oci-patch examples | less` a `oci-patch examples > examples.txt`.
+Pokud výstup míří do terminálu, příkazy, YAML klíče, komentáře a nadpisy jsou barevně zvýrazněné. Při pipe nebo přesměrování se vypíše čistý text, takže funguje i `oci-toolbox examples | less` a `oci-toolbox examples > examples.txt`.
 
 ---
 
@@ -720,10 +720,10 @@ Prakticky:
 
 ```bash
 # Jedna výsledná vrstva s celým finálním filesystemem.
-oci-patch copy --recipe app.yml --reduce SOURCE DEST
+oci-toolbox copy --recipe app.yml --reduce SOURCE DEST
 
 # Původní/base vrstvy zůstanou, změny z recipe budou v jedné vrstvě navíc.
-oci-patch copy --recipe app.yml --reduce-changes SOURCE DEST
+oci-toolbox copy --recipe app.yml --reduce-changes SOURCE DEST
 ```
 
 ---
@@ -747,11 +747,11 @@ steps:
 
   - action: set-label
     key: "org.opencontainers.image.patched-by"
-    value: "oci-patch"
+    value: "oci-toolbox"
 ```
 
 ```bash
-oci-patch copy \
+oci-toolbox copy \
   --src-creds user:pass --dest-creds user:pass \
   --recipe inject-encjson.yml \
   docker://registry.example.com/team/gateway:2.3-latest \
@@ -802,7 +802,7 @@ steps:
 ```
 
 ```bash
-oci-patch copy \
+oci-toolbox copy \
   --src-creds user:pass --dest-creds user:pass \
   --recipe rebase-app.yml \
   docker://registry.example.com/myapp:2.3-latest \
@@ -830,7 +830,7 @@ steps:
 ```
 
 ```bash
-oci-patch copy \
+oci-toolbox copy \
   --recipe shadow.yml \
   --reduce \
   docker://registry.example.com/myapp:latest \
@@ -887,7 +887,7 @@ Pokud dnes používáte `skopeo` pro `inspect` a `copy`, stačí změnit cestu k
 let service = SkopeoService::new("skopeo".to_string());
 
 // po
-let service = SkopeoService::new("/usr/local/bin/oci-patch".to_string());
+let service = SkopeoService::new("/usr/local/bin/oci-toolbox".to_string());
 ```
 
 Všechny flagy (`--src-creds`, `--dest-creds`, `--debug`, `--dest-no-reuse`, `--creds`, `--override-arch`, `--override-os`) jsou identické.
@@ -903,6 +903,6 @@ go test ./...
 Testy jsou plně offline — nevyžadují přístup k žádnému registry. Používají in-memory OCI image sestavené z tar vrstev.
 
 ```
-ok  github.com/martinmares/oci-patch/internal/image    (17 testů)
-ok  github.com/martinmares/oci-patch/internal/recipe   (11 testů)
+ok  github.com/martinmares/oci-toolbox/internal/image    (17 testů)
+ok  github.com/martinmares/oci-toolbox/internal/recipe   (11 testů)
 ```

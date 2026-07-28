@@ -4,8 +4,8 @@ set -euo pipefail
 version="${RELEASE_VERSION:-$(tr -d '[:space:]' < VERSION)}"
 commit="${CI_COMMIT_SHORT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || printf unknown)}"
 date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-package="oci-patch"
-binary="oci-patch"
+package="oci-toolbox"
+binary="oci-toolbox"
 release_dir="dist/release"
 
 if [[ -z "${version}" ]]; then
@@ -18,7 +18,7 @@ bash scripts/build_embedded_extractors.sh
 rm -rf "${release_dir}"
 mkdir -p "${release_dir}" .tmp/go-build-cache
 
-ldflags="-s -w -X github.com/martinmares/oci-patch/cmd.version=${version} -X github.com/martinmares/oci-patch/cmd.commit=${commit} -X github.com/martinmares/oci-patch/cmd.date=${date}"
+ldflags="-s -w -X github.com/martinmares/oci-toolbox/cmd.version=${version} -X github.com/martinmares/oci-toolbox/cmd.commit=${commit} -X github.com/martinmares/oci-toolbox/cmd.date=${date}"
 
 targets=(
   "linux/amd64"

@@ -68,7 +68,7 @@ func WrapEntrypointWithBootstrap(img v1.Image, bootstrap string) (v1.Image, erro
 	}
 	cfg = cfg.DeepCopy()
 
-	wrapped := []string{"/bin/sh", "-c", shadowEntrypointScript, "oci-patch-shadow", bootstrap}
+	wrapped := []string{"/bin/sh", "-c", shadowEntrypointScript, "oci-toolbox-shadow", bootstrap}
 	cfg.Config.Entrypoint = append(wrapped, cfg.Config.Entrypoint...)
 	return mutate.ConfigFile(img, cfg)
 }
@@ -119,17 +119,17 @@ func SetStopSignal(img v1.Image, signal string) (v1.Image, error) {
 
 // InspectOutput is the JSON-serialisable inspect result (skopeo-compatible).
 type InspectOutput struct {
-	Name          string        `json:"Name"`
-	Digest        string        `json:"Digest"`
-	RepoTags      []string      `json:"RepoTags"`
-	Created       string        `json:"Created"`
-	DockerVersion string        `json:"DockerVersion"`
+	Name          string            `json:"Name"`
+	Digest        string            `json:"Digest"`
+	RepoTags      []string          `json:"RepoTags"`
+	Created       string            `json:"Created"`
+	DockerVersion string            `json:"DockerVersion"`
 	Labels        map[string]string `json:"Labels"`
-	Architecture  string        `json:"Architecture"`
-	Os            string        `json:"Os"`
-	Layers        []string      `json:"Layers"`
-	LayersData    []LayerData   `json:"LayersData"`
-	Env           []string      `json:"Env"`
+	Architecture  string            `json:"Architecture"`
+	Os            string            `json:"Os"`
+	Layers        []string          `json:"Layers"`
+	LayersData    []LayerData       `json:"LayersData"`
+	Env           []string          `json:"Env"`
 }
 
 // LayerData holds per-layer metadata (skopeo-compatible).

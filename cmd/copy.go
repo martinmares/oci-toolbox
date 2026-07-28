@@ -15,11 +15,11 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/martinmares/oci-patch/internal/auth"
-	"github.com/martinmares/oci-patch/internal/image"
-	"github.com/martinmares/oci-patch/internal/logging"
-	"github.com/martinmares/oci-patch/internal/progress"
-	"github.com/martinmares/oci-patch/internal/recipe"
+	"github.com/martinmares/oci-toolbox/internal/auth"
+	"github.com/martinmares/oci-toolbox/internal/image"
+	"github.com/martinmares/oci-toolbox/internal/logging"
+	"github.com/martinmares/oci-toolbox/internal/progress"
+	"github.com/martinmares/oci-toolbox/internal/recipe"
 )
 
 var (
@@ -45,11 +45,11 @@ var copyCmd = &cobra.Command{
 	Use:   "copy SOURCE DESTINATION | copy --batch-file FILE",
 	Short: "Copy and patch an OCI image between registries or Docker archives",
 	Args:  copyArgs,
-	Example: `  oci-patch copy docker://registry.example.com/app:latest docker://registry.example.com/app:patched
-  oci-patch copy file://app.tgz docker://registry.example.com/app:restored
-  oci-patch copy --src-creds user:pass --dest-creds user:pass docker://src/repo:tag docker://dst/repo:tag
-  oci-patch copy --progress --recipe inject-tool.yml docker://src/repo:tag docker://dst/repo:tag
-  oci-patch copy --batch-file images.yml --src-insecure --dest-insecure`,
+	Example: `  oci-toolbox copy docker://registry.example.com/app:latest docker://registry.example.com/app:patched
+  oci-toolbox copy file://app.tgz docker://registry.example.com/app:restored
+  oci-toolbox copy --src-creds user:pass --dest-creds user:pass docker://src/repo:tag docker://dst/repo:tag
+  oci-toolbox copy --progress --recipe inject-tool.yml docker://src/repo:tag docker://dst/repo:tag
+  oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure`,
 	RunE: runCopy,
 }
 
@@ -71,7 +71,7 @@ func init() {
 	copyCmd.Flags().BoolVar(&destInsecure, "dest-insecure", false, "skip TLS certificate verification for destination registry")
 	copyCmd.Flags().StringArrayVar(&destTags, "dest-tag", nil, "additional destination tag in the same repository (may be specified multiple times)")
 
-	// Legacy --from/--to flags (hidden, for oci-patch native style)
+	// Legacy --from/--to flags (hidden, for oci-toolbox native style)
 	copyCmd.Flags().StringVar(&fromRef, "from", "", "source image reference")
 	copyCmd.Flags().StringVar(&toRef, "to", "", "destination image reference")
 	_ = copyCmd.Flags().MarkHidden("from")

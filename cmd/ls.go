@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/martinmares/oci-patch/internal/image"
-	"github.com/martinmares/oci-patch/internal/logging"
+	"github.com/martinmares/oci-toolbox/internal/image"
+	"github.com/martinmares/oci-toolbox/internal/logging"
 )
 
 var (
@@ -23,8 +23,8 @@ var lsCmd = &cobra.Command{
 	Use:   "ls IMAGE PATH",
 	Short: "List entries from an OCI image directory",
 	Args:  cobra.ExactArgs(2),
-	Example: `  oci-patch ls docker://registry.example.com/app:latest /app/resources
-  oci-patch ls --src-insecure docker://registry.example.com/app:latest /app/resources`,
+	Example: `  oci-toolbox ls docker://registry.example.com/app:latest /app/resources
+  oci-toolbox ls --src-insecure docker://registry.example.com/app:latest /app/resources`,
 	RunE: runLS,
 }
 

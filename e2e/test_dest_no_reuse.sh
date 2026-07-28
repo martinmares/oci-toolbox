@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 COMPOSE_FILE="$ROOT_DIR/e2e/docker-compose.yml"
-COMPOSE_PROJECT="oci-patch-e2e"
-BIN_PATH="$ROOT_DIR/.tmp/oci-patch-e2e"
+COMPOSE_PROJECT="oci-toolbox-e2e"
+BIN_PATH="$ROOT_DIR/.tmp/oci-toolbox-e2e"
 CERT_DIR="$ROOT_DIR/e2e/certs"
 REGISTRY="127.0.0.1:5443"
 SRC_REF="$REGISTRY/src/app:latest"

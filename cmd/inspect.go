@@ -9,8 +9,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/spf13/cobra"
 
-	"github.com/martinmares/oci-patch/internal/auth"
-	"github.com/martinmares/oci-patch/internal/image"
+	"github.com/martinmares/oci-toolbox/internal/auth"
+	"github.com/martinmares/oci-toolbox/internal/image"
 )
 
 var (
@@ -26,9 +26,9 @@ var inspectCmd = &cobra.Command{
 	Use:   "inspect IMAGE",
 	Short: "Display metadata of an OCI image (JSON, skopeo-compatible)",
 	Args:  cobra.ExactArgs(1),
-	Example: `  oci-patch inspect docker://registry.example.com/app:latest
-  oci-patch inspect --creds user:pass docker://registry.example.com/app:latest
-  oci-patch inspect --override-os linux --override-arch arm64 docker://docker.io/library/alpine:3.21`,
+	Example: `  oci-toolbox inspect docker://registry.example.com/app:latest
+  oci-toolbox inspect --creds user:pass docker://registry.example.com/app:latest
+  oci-toolbox inspect --override-os linux --override-arch arm64 docker://docker.io/library/alpine:3.21`,
 	RunE: runInspect,
 }
 

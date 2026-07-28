@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/martinmares/oci-patch/internal/image"
-	"github.com/martinmares/oci-patch/internal/logging"
+	"github.com/martinmares/oci-toolbox/internal/image"
+	"github.com/martinmares/oci-toolbox/internal/logging"
 )
 
 var (
@@ -23,8 +23,8 @@ var treeCmd = &cobra.Command{
 	Use:   "tree IMAGE PATH",
 	Short: "Print a tree view of an OCI image path",
 	Args:  cobra.ExactArgs(2),
-	Example: `  oci-patch tree docker://registry.example.com/app:latest /app
-  oci-patch tree --src-insecure docker://registry.example.com/app:latest /app`,
+	Example: `  oci-toolbox tree docker://registry.example.com/app:latest /app
+  oci-toolbox tree --src-insecure docker://registry.example.com/app:latest /app`,
 	RunE: runTree,
 }
 

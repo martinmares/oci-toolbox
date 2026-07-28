@@ -8,8 +8,8 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/spf13/cobra"
 
-	"github.com/martinmares/oci-patch/internal/image"
-	"github.com/martinmares/oci-patch/internal/logging"
+	"github.com/martinmares/oci-toolbox/internal/image"
+	"github.com/martinmares/oci-toolbox/internal/logging"
 )
 
 var (
@@ -25,8 +25,8 @@ var catCmd = &cobra.Command{
 	Use:   "cat IMAGE PATH",
 	Short: "Print a file from an OCI image",
 	Args:  cobra.ExactArgs(2),
-	Example: `  oci-patch cat docker://registry.example.com/app:latest /app/resources/git.properties
-  oci-patch cat --src-insecure docker://registry.example.com/app:latest /app/resources/git.properties`,
+	Example: `  oci-toolbox cat docker://registry.example.com/app:latest /app/resources/git.properties
+  oci-toolbox cat --src-insecure docker://registry.example.com/app:latest /app/resources/git.properties`,
 	RunE: runCat,
 }
 

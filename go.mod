@@ -1,4 +1,4 @@
-module github.com/martinmares/oci-patch
+module github.com/martinmares/oci-toolbox
 
 go 1.26.2
 

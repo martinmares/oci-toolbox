@@ -14,13 +14,13 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/martinmares/oci-patch/internal/image"
-	"github.com/martinmares/oci-patch/internal/testutil"
+	"github.com/martinmares/oci-toolbox/internal/image"
+	"github.com/martinmares/oci-toolbox/internal/testutil"
 )
 
 func TestAddFileLayer_basic(t *testing.T) {
 	img := testutil.NewImage(t)
-	content := []byte("hello from oci-patch")
+	content := []byte("hello from oci-toolbox")
 	src := testutil.WriteLocalFile(t, content)
 
 	img2, err := image.AddFileLayer(img, src, "/usr/local/bin/tool", "0755", "")

@@ -11,7 +11,7 @@ steps:
 
   - action: set-label
   key: "org.opencontainers.image.patched-by"
-    value: "oci-patch"
+    value: "oci-toolbox"
 
   - action: set-label
   key: "org.opencontainers.image.patch-recipe"

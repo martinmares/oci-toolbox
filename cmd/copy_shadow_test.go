@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/martinmares/oci-patch/internal/recipe"
+	"github.com/martinmares/oci-toolbox/internal/recipe"
 )
 
 func TestSetShadowEntrypointWrapping(t *testing.T) {

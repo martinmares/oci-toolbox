@@ -62,7 +62,7 @@ func NewImageWithFiles(t *testing.T, files map[string][]byte) v1.Image {
 // WriteLocalFile writes content to a temp file and returns its path.
 func WriteLocalFile(t *testing.T, content []byte) string {
 	t.Helper()
-	f, err := os.CreateTemp(t.TempDir(), "oci-patch-*")
+	f, err := os.CreateTemp(t.TempDir(), "oci-toolbox-*")
 	if err != nil {
 		t.Fatalf("temp file: %v", err)
 	}
@@ -76,7 +76,7 @@ func WriteLocalFile(t *testing.T, content []byte) string {
 // WriteZip creates a zip archive in a temp dir with the given entries and returns its path.
 func WriteZip(t *testing.T, entries map[string][]byte) string {
 	t.Helper()
-	f, err := os.CreateTemp(t.TempDir(), "oci-patch-*.zip")
+	f, err := os.CreateTemp(t.TempDir(), "oci-toolbox-*.zip")
 	if err != nil {
 		t.Fatalf("temp zip: %v", err)
 	}

@@ -4,7 +4,7 @@ set -euo pipefail
 version="${RELEASE_VERSION:-$(tr -d '[:space:]' < VERSION)}"
 tag="${RELEASE_TAG:-v${version}}"
 notes_file="dist/release_notes.md"
-package_name="oci-patch"
+package_name="oci-toolbox"
 
 if [[ -z "${version}" ]]; then
   echo "VERSION is empty" >&2

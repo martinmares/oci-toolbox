@@ -1,4 +1,4 @@
-// extractor is a self-extracting binary embedded into the target image by oci-patch shadow action.
+// extractor is a self-extracting binary embedded into the target image by oci-toolbox shadow action.
 // At runtime inside the container it:
 //  1. Reads its own payload (encrypted blob + password + extract-to path).
 //  2. Decrypts the blob into a tar.gz archive.
@@ -26,7 +26,7 @@ import (
 	"strings"
 )
 
-// Payload appended to this binary by oci-patch:
+// Payload appended to this binary by oci-toolbox:
 //
 //	payloadData(payloadSize) | password(64 bytes hex) | extractTo(extractToSize bytes) | magic(8) | extractToSize(4) | payloadSize(4)
 const (
@@ -158,7 +158,7 @@ func parsePayload(data []byte) (payloadData []byte, password, extractTo string, 
 		payloadSize = int(binary.LittleEndian.Uint32(footer[0:4]))
 		extractToSize = int(binary.LittleEndian.Uint32(footer[4:8]))
 	default:
-		return nil, "", "", fmt.Errorf("no payload attached — use oci-patch shadow action to build this binary")
+		return nil, "", "", fmt.Errorf("no payload attached — use oci-toolbox shadow action to build this binary")
 	}
 
 	totalPayload := payloadSize + passwordLen + extractToSize + footerSize
@@ -206,7 +206,7 @@ func openPayload(path string) (*os.File, payloadMeta, error) {
 		extractToSize = int64(binary.LittleEndian.Uint32(footer[4:8]))
 	default:
 		self.Close()
-		return nil, payloadMeta{}, fmt.Errorf("no payload attached — use oci-patch shadow action to build this binary")
+		return nil, payloadMeta{}, fmt.Errorf("no payload attached — use oci-toolbox shadow action to build this binary")
 	}
 
 	totalPayload := payloadSize + passwordLen + extractToSize + footerSize

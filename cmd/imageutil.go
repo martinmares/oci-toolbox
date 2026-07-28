@@ -7,7 +7,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
-	"github.com/martinmares/oci-patch/internal/auth"
+	"github.com/martinmares/oci-toolbox/internal/auth"
 )
 
 func loadImage(refArg, creds string, insecure bool, os, arch, variant string) (v1.Image, error) {

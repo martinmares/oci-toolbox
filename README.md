@@ -1,14 +1,14 @@
-# oci-patch
+# oci-toolbox
 
 **OCI image transfer and in-flight patching tool — no Docker daemon required.**
 
-`oci-patch` copies container images between registries (like `skopeo`) and additionally applies declarative *recipes* that modify the image during transfer — injecting files, rewriting metadata, rebasing onto a different base image, and more. Everything runs as a single static binary with zero runtime dependencies.
+`oci-toolbox` copies container images between registries (like `skopeo`) and additionally applies declarative *recipes* that modify the image during transfer — injecting files, rewriting metadata, rebasing onto a different base image, and more. Everything runs as a single static binary with zero runtime dependencies.
 
 ---
 
 ## Table of Contents
 
-- [Why oci-patch](#why-oci-patch)
+- [Why oci-toolbox](#why-oci-toolbox)
 - [Comparison with skopeo](#comparison-with-skopeo)
 - [Installation](#installation)
 - [Commands](#commands)
@@ -29,7 +29,7 @@
 
 ---
 
-## Why oci-patch
+## Why oci-toolbox
 
 The typical workflow for patching a container image looks like this:
 
@@ -40,15 +40,15 @@ docker build -f Dockerfile.patch .  # build patched image
 docker push patched-image
 ```
 
-This requires a running Docker daemon, a Dockerfile, and intermediate containers. `oci-patch` collapses the entire workflow into a single command with a YAML recipe — no daemon, no Dockerfile, no intermediate containers, no `docker` binary.
+This requires a running Docker daemon, a Dockerfile, and intermediate containers. `oci-toolbox` collapses the entire workflow into a single command with a YAML recipe — no daemon, no Dockerfile, no intermediate containers, no `docker` binary.
 
 ---
 
 ## Comparison with skopeo
 
-`oci-patch` is **intentionally CLI-compatible** with `skopeo` for the commands it implements (`copy`, `inspect`, `--version`). You can replace the `skopeo` binary with `oci-patch` in existing scripts without changing arguments.
+`oci-toolbox` is **intentionally CLI-compatible** with `skopeo` for the commands it implements (`copy`, `inspect`, `--version`). You can replace the `skopeo` binary with `oci-toolbox` in existing scripts without changing arguments.
 
-| Feature | skopeo | oci-patch |
+| Feature | skopeo | oci-toolbox |
 |---------|--------|-----------|
 | Copy image between registries | ✅ | ✅ |
 | Inspect image metadata (JSON) | ✅ | ✅ |
@@ -82,11 +82,11 @@ This requires a running Docker daemon, a Dockerfile, and intermediate containers
 
 **1. In-flight modification**
 
-`skopeo copy` is a pure transfer tool — it moves bits from A to B. `oci-patch copy` modifies the image as it flows through: it pulls layers, applies recipe steps (each step appends a new OCI layer or rewrites image config), then pushes the result. The original image is never mutated.
+`skopeo copy` is a pure transfer tool — it moves bits from A to B. `oci-toolbox copy` modifies the image as it flows through: it pulls layers, applies recipe steps (each step appends a new OCI layer or rewrites image config), then pushes the result. The original image is never mutated.
 
 **2. No `RUN` support — intentionally**
 
-Running arbitrary commands inside a container during build (like `apk upgrade`, `adduser`) requires a container runtime (runc, crun, or buildkit). `oci-patch` deliberately excludes this to remain a zero-dependency static binary. Everything it does is pure layer and config manipulation in memory.
+Running arbitrary commands inside a container during build (like `apk upgrade`, `adduser`) requires a container runtime (runc, crun, or buildkit). `oci-toolbox` deliberately excludes this to remain a zero-dependency static binary. Everything it does is pure layer and config manipulation in memory.
 
 **3. Multi-source composition**
 
@@ -101,7 +101,7 @@ Steps can be guarded with `condition: if-not-exists: /path` — the step is skip
 All flags used in the most common `skopeo` workflows are supported with identical names:
 
 ```bash
-# skopeo — works unchanged as oci-patch
+# skopeo — works unchanged as oci-toolbox
 skopeo inspect --creds user:pass docker://registry.example.com/app:latest
 skopeo copy --src-creds u:p --dest-creds u:p docker://src/img:tag docker://dst/img:tag
 skopeo copy --debug --dest-no-reuse docker://src docker://dst
@@ -113,15 +113,15 @@ skopeo --version
 ## Installation
 
 ```bash
-git clone https://github.com/martinmares/oci-patch
-cd oci-patch
-go build -o oci-patch .
+git clone https://github.com/martinmares/oci-toolbox
+cd oci-toolbox
+go build -o oci-toolbox .
 ```
 
 Or cross-compile for Linux amd64:
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o oci-patch-linux-amd64 .
+GOOS=linux GOARCH=amd64 go build -o oci-toolbox-linux-amd64 .
 ```
 
 With [just](https://just.systems/), local release-style binaries are written to `dist/`:
@@ -139,7 +139,7 @@ just build-windows
 ### copy
 
 ```
-oci-patch copy [flags] SOURCE DESTINATION
+oci-toolbox copy [flags] SOURCE DESTINATION
 ```
 
 Copies an image from SOURCE to DESTINATION, applying any specified recipes in order.
@@ -167,17 +167,17 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 
 ```bash
 # Simple copy (no recipe)
-oci-patch copy docker://registry.example.com/app:1.0 docker://registry.example.com/app:1.0-copy
+oci-toolbox copy docker://registry.example.com/app:1.0 docker://registry.example.com/app:1.0-copy
 
 # Copy with credentials
-oci-patch copy \
+oci-toolbox copy \
   --src-creds srcuser:srcpass \
   --dest-creds dstuser:dstpass \
   docker://src.registry.com/app:2.3-latest \
   docker://dst.registry.com/app:2026.04.17.01
 
 # Copy once and publish additional destination tags for the same manifest
-oci-patch copy \
+oci-toolbox copy \
   --dest-creds dstuser:dstpass \
   --dest-tag latest \
   --dest-tag stable \
@@ -185,7 +185,7 @@ oci-patch copy \
   docker://dst.registry.com/app:2026.04.17.01
 
 # Copy with a recipe (inject a tool)
-oci-patch copy \
+oci-toolbox copy \
   --src-creds user:pass \
   --dest-creds user:pass \
   --recipe inject-tool.yml \
@@ -193,25 +193,25 @@ oci-patch copy \
   docker://registry.example.com/app:patched
 
 # Copy with multiple recipes applied in sequence
-oci-patch copy \
+oci-toolbox copy \
   --recipe recipe-1.yml \
   --recipe recipe-2.yml \
   docker://src/app:tag \
   docker://dst/app:tag
 
 # Digest-based source
-oci-patch copy \
+oci-toolbox copy \
   --src-creds user:pass \
   docker://registry.example.com/app@sha256:abc123... \
   docker://registry.example.com/app:stable
 
 # Retry fallback with --dest-no-reuse
-oci-patch copy --debug --dest-no-reuse \
+oci-toolbox copy --debug --dest-no-reuse \
   --src-creds user:pass --dest-creds user:pass \
   docker://src/app:tag docker://dst/app:tag
 
 # Machine-readable progress for integrations
-oci-patch copy --progress-json \
+oci-toolbox copy --progress-json \
   docker://src/app:tag docker://dst/app:tag
 ```
 
@@ -232,7 +232,7 @@ copy:
 ```
 
 ```bash
-oci-patch copy \
+oci-toolbox copy \
   --batch-file images.yml \
   --src-insecure \
   --dest-insecure \
@@ -246,7 +246,7 @@ The primary batch keys are `src` and `dest`, matching the `--src-*` and `--dest-
 ### inspect
 
 ```
-oci-patch inspect [flags] IMAGE
+oci-toolbox inspect [flags] IMAGE
 ```
 
 Fetches and displays image metadata as JSON (skopeo-compatible format).
@@ -266,22 +266,22 @@ Fetches and displays image metadata as JSON (skopeo-compatible format).
 
 ```bash
 # Basic inspect
-oci-patch inspect docker://docker.io/library/alpine:3.21
+oci-toolbox inspect docker://docker.io/library/alpine:3.21
 
 # With credentials
-oci-patch inspect --creds user:pass docker://registry.example.com/app:latest
+oci-toolbox inspect --creds user:pass docker://registry.example.com/app:latest
 
 # Registry with a non-standard/self-signed certificate
-oci-patch inspect --src-insecure docker://registry.example.com/app:latest
+oci-toolbox inspect --src-insecure docker://registry.example.com/app:latest
 
 # Select specific platform from multi-arch index
-oci-patch inspect \
+oci-toolbox inspect \
   --override-os linux \
   --override-arch arm64 \
   docker://docker.io/library/alpine:3.21
 
 # Fast inspect without tag list
-oci-patch inspect --no-tags docker://registry.example.com/app:latest
+oci-toolbox inspect --no-tags docker://registry.example.com/app:latest
 ```
 
 **Output format** (skopeo-compatible):
@@ -312,7 +312,7 @@ oci-patch inspect --no-tags docker://registry.example.com/app:latest
 ### cat
 
 ```
-oci-patch cat [flags] IMAGE PATH
+oci-toolbox cat [flags] IMAGE PATH
 ```
 
 Fetches an image and prints one regular file from its filesystem to stdout.
@@ -333,19 +333,19 @@ If the file does not exist, `cat` exits successfully and prints nothing. With `-
 **Examples:**
 
 ```bash
-oci-patch cat \
+oci-toolbox cat \
   --src-insecure \
   docker://registry.example.com/team/gateway:2.2-test-latest \
   /app/resources/git.properties
 
 # Missing files are silent unless --debug is used
-oci-patch cat --debug docker://registry.example.com/app:latest /missing/file
+oci-toolbox cat --debug docker://registry.example.com/app:latest /missing/file
 ```
 
 ### ls
 
 ```
-oci-patch ls [flags] IMAGE PATH
+oci-toolbox ls [flags] IMAGE PATH
 ```
 
 Lists entries under a path inside an image. Missing paths are silent by default and only log a warning with `--debug`.
@@ -364,13 +364,13 @@ Lists entries under a path inside an image. Missing paths are silent by default 
 **Example:**
 
 ```bash
-oci-patch ls --src-insecure docker://registry.example.com/app:latest /app/resources
+oci-toolbox ls --src-insecure docker://registry.example.com/app:latest /app/resources
 ```
 
 ### tree
 
 ```
-oci-patch tree [flags] IMAGE PATH
+oci-toolbox tree [flags] IMAGE PATH
 ```
 
 Prints a tree view of the subtree rooted at the given path. Missing paths are silent by default and only log a warning with `--debug`.
@@ -389,25 +389,25 @@ Prints a tree view of the subtree rooted at the given path. Missing paths are si
 **Example:**
 
 ```bash
-oci-patch tree --src-insecure docker://registry.example.com/app:latest /app
+oci-toolbox tree --src-insecure docker://registry.example.com/app:latest /app
 ```
 
 ### examples command
 
 ```
-oci-patch examples
+oci-toolbox examples
 ```
 
 Shows a command cookbook directly in the terminal: ordinary image copy, batch copy with the complete `images.yml` structure, and complete recipe examples for a Java application, tool and configuration patching, rebasing, artifact extraction, unpacking, `shadow`, permissions, metadata, and layer reduction.
 
 ```bash
-oci-patch examples
+oci-toolbox examples
 
 # Equivalent Cobra help form:
-oci-patch help examples
+oci-toolbox help examples
 ```
 
-When stdout is a terminal, commands, YAML keys, comments, and section headings are colorized. Piping or redirecting the output produces plain text, so this is safe for `oci-patch examples | less` and `oci-patch examples > examples.txt`.
+When stdout is a terminal, commands, YAML keys, comments, and section headings are colorized. Piping or redirecting the output produces plain text, so this is safe for `oci-toolbox examples | less` and `oci-toolbox examples > examples.txt`.
 
 ---
 
@@ -720,10 +720,10 @@ In practice:
 
 ```bash
 # One output layer containing the whole final filesystem.
-oci-patch copy --recipe app.yml --reduce SOURCE DEST
+oci-toolbox copy --recipe app.yml --reduce SOURCE DEST
 
 # Original/base layers stay intact, recipe changes become one extra layer.
-oci-patch copy --recipe app.yml --reduce-changes SOURCE DEST
+oci-toolbox copy --recipe app.yml --reduce-changes SOURCE DEST
 ```
 
 ---
@@ -747,11 +747,11 @@ steps:
 
   - action: set-label
     key: "org.opencontainers.image.patched-by"
-    value: "oci-patch"
+    value: "oci-toolbox"
 ```
 
 ```bash
-oci-patch copy \
+oci-toolbox copy \
   --src-creds user:pass --dest-creds user:pass \
   --recipe inject-encjson.yml \
   docker://registry.example.com/team/gateway:2.3-latest \
@@ -802,7 +802,7 @@ steps:
 ```
 
 ```bash
-oci-patch copy \
+oci-toolbox copy \
   --src-creds user:pass --dest-creds user:pass \
   --recipe rebase-app.yml \
   docker://registry.example.com/myapp:2.3-latest \
@@ -830,7 +830,7 @@ steps:
 ```
 
 ```bash
-oci-patch copy \
+oci-toolbox copy \
   --recipe shadow.yml \
   --reduce \
   docker://registry.example.com/myapp:latest \
@@ -887,7 +887,7 @@ If you use `skopeo` today for `inspect` and `copy`, replace the binary path:
 let service = SkopeoService::new("skopeo".to_string());
 
 // after
-let service = SkopeoService::new("/usr/local/bin/oci-patch".to_string());
+let service = SkopeoService::new("/usr/local/bin/oci-toolbox".to_string());
 ```
 
 All flags (`--src-creds`, `--dest-creds`, `--debug`, `--dest-no-reuse`, `--creds`, `--override-arch`, `--override-os`) are identical.
@@ -903,6 +903,6 @@ go test ./...
 Tests are fully offline — no registry access required. They use in-memory OCI images built from tar layers.
 
 ```
-ok  github.com/martinmares/oci-patch/internal/image    (17 tests)
-ok  github.com/martinmares/oci-patch/internal/recipe   (11 tests)
+ok  github.com/martinmares/oci-toolbox/internal/image    (17 tests)
+ok  github.com/martinmares/oci-toolbox/internal/recipe   (11 tests)
 ```

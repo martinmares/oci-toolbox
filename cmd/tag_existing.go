@@ -9,7 +9,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/spf13/cobra"
 
-	"github.com/martinmares/oci-patch/internal/auth"
+	"github.com/martinmares/oci-toolbox/internal/auth"
 )
 
 var (
@@ -21,8 +21,8 @@ var tagExistingCmd = &cobra.Command{
 	Use:   "tag-existing SOURCE_BY_DIGEST DEST_TAG",
 	Short: "Add a tag to an existing manifest already present in the target repository",
 	Args:  cobra.ExactArgs(2),
-	Example: `  oci-patch tag-existing docker://registry.example.com/app@sha256:abcd docker://registry.example.com/app:release-1
-  oci-patch tag-existing --creds user:pass docker://registry.example.com/app@sha256:abcd docker://registry.example.com/app:release-2`,
+	Example: `  oci-toolbox tag-existing docker://registry.example.com/app@sha256:abcd docker://registry.example.com/app:release-1
+  oci-toolbox tag-existing --creds user:pass docker://registry.example.com/app@sha256:abcd docker://registry.example.com/app:release-2`,
 	RunE: runTagExisting,
 }
 
