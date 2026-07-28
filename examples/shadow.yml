@@ -6,6 +6,7 @@ steps:
     path: /app
     extract-to: /app
     output: /app/app.self
+    wrap-entrypoint: true
 
   - action: remove-dir
     dst: /usr/share/java/maven-3

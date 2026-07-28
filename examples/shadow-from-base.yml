@@ -1,6 +1,7 @@
 name: "shadow /app onto a new base"
 description: "Take /app from the source image, rebuild on a new base, and keep /app OpenShift-safe"
 
+# Invoke with --wrap-entrypoint to preserve Entrypoint and Cmd from the CLI source image.
 sources:
   - id: src
     ref: "{{.SourceImage}}"

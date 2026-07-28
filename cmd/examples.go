@@ -38,6 +38,55 @@ copy:
   - src: registry.example.com/team/ticket:release-1.0
     dest: registry.example.com/team/ticket:test-latest`, color)
 
+	section(w, "Publish an image bundle", color)
+	codeBlock(w, `# bundle.yml: mutable desired state kept in Git.
+name: stable
+registries:
+  source:
+    url: registry-source.example.com
+  target:
+    url: registry-release.example.com
+    project: release
+extra_tags: [stable]
+images:
+  - id: config
+    source:
+      repository: team/config
+      tag: 2.3-latest
+    target:
+      repository: config
+    deployment:
+      app_name: config
+      container_name: config
+
+oci-toolbox bundle validate bundle.yml
+oci-toolbox bundle plan bundle.yml --release-id RE_2026.07.28.01
+oci-toolbox bundle publish bundle.yml \
+  --release-id RE_2026.07.28.01 \
+  --bundle-revision abc123 \
+  --output releases/RE_2026.07.28.01.yml \
+  --progress`, color)
+
+	section(w, "Reconstruct a release manifest", color)
+	codeBlock(w, `# Reconstruct directly from existing tagged images.
+oci-toolbox release reconstruct \
+  registry.example.com/release/api:RE_2026.07.28.01 \
+  registry.example.com/release/ui:RE_2026.07.28.01 \
+  --output releases/RE_2026.07.28.01.yml
+
+# Use a strict YAML input when deployment names differ from repository names.
+# release-images.yml
+images:
+  - ref: registry.example.com/release/diagnostics:RE_2026.07.28.01
+    id: ui-diagnostics
+    app_name: ui
+    container_name: diagnostics
+
+oci-toolbox release reconstruct \
+  --file release-images.yml \
+  --release-id RE_2026.07.28.01 \
+  --output releases/RE_2026.07.28.01.yml`, color)
+
 	section(w, "Java application", color)
 	codeBlock(w, `# app.yml: add an application, make /app writable for the runtime user, and set startup metadata.
 name: java-application
@@ -144,6 +193,7 @@ steps:
     path: /app
     extract-to: /app
     output: /app/app.self
+    wrap-entrypoint: true
   - action: fix-permissions
     path: /app
     owner: "1001:0"

@@ -18,6 +18,8 @@
   - [ls](#ls)
   - [tree](#tree)
   - [examples](#examples-command)
+  - [bundle](#bundle)
+  - [release reconstruct](#release-reconstruct)
 - [Credentials](#credentials)
 - [Recipes](#recipes)
   - [Recipe structure](#recipe-structure)
@@ -408,6 +410,95 @@ oci-toolbox help examples
 ```
 
 When stdout is a terminal, commands, YAML keys, comments, and section headings are colorized. Piping or redirecting the output produces plain text, so this is safe for `oci-toolbox examples | less` and `oci-toolbox examples > examples.txt`.
+
+### bundle
+
+A bundle is a mutable, Git-managed declaration of which image tags or digests should be published as one release. It contains no credentials and uses strict YAML: unknown fields, duplicate IDs, duplicate deployment selectors, and duplicate target repositories are rejected.
+
+```yaml
+name: stable
+description: Stable application bundle
+
+registries:
+  source:
+    url: registry-source.example.com
+  target:
+    url: registry-release.example.com
+    project: release
+
+extra_tags:
+  - stable
+
+images:
+  - id: config
+    source:
+      repository: team/config
+      tag: 2.3-latest
+    target:
+      repository: config
+    deployment:
+      app_name: config
+      container_name: config
+```
+
+Each `source` must contain exactly one of `tag` or `digest`. Registry URLs and project paths can be replaced at runtime with `--src-registry`, `--dest-registry`, `--src-project`, and `--dest-project`.
+
+```bash
+# Local validation without registry access
+oci-toolbox bundle validate bundle.yml
+
+# Show resolved source and destination references
+oci-toolbox bundle plan bundle.yml \
+  --release-id RE_2026.07.28.01
+
+# Copy images and create the immutable digest-based release record
+oci-toolbox bundle publish bundle.yml \
+  --release-id RE_2026.07.28.01 \
+  --bundle-revision "$(git rev-parse HEAD)" \
+  --extra-tag candidate \
+  --output releases/RE_2026.07.28.01.yml \
+  --progress
+```
+
+`bundle publish` preflights all images before copying. A missing primary release tag is created, the same existing digest is treated as an idempotent retry, and an existing tag with another digest aborts the operation. Extra tags such as `stable` are movable aliases. The output file must not already exist. Git commit, tag, and push operations deliberately remain the responsibility of CI or the caller.
+
+The initial bundle implementation supports only single-platform `linux/amd64` image manifests. OCI indexes and other platforms are rejected explicitly.
+
+### release reconstruct
+
+`release reconstruct` builds the same digest-based release manifest from images that already exist in a registry. References can be passed directly:
+
+```bash
+oci-toolbox release reconstruct \
+  registry.example.com/release/config:RE_2026.07.28.01 \
+  registry.example.com/release/gateway:RE_2026.07.28.01 \
+  --output releases/RE_2026.07.28.01.yml
+```
+
+Every reference must contain an explicit tag or digest; an implicit `latest` is rejected. When every reference uses the same tag, that tag becomes `release_id`. Otherwise, pass `--release-id`. The repository basename is used as `id`, `app_name`, and `container_name`.
+
+Use a strict YAML input when deployment selectors differ from repository names:
+
+```yaml
+images:
+  - ref: registry.example.com/release/config:RE_2026.07.28.01
+    id: config
+    app_name: config-service
+    container_name: application
+  - ref: registry.example.com/release/gateway:RE_2026.07.28.01
+    app_name: gateway
+    container_name: gateway
+```
+
+```bash
+oci-toolbox release reconstruct \
+  --file release-images.yml \
+  --release-id RE_2026.07.28.01 \
+  --extra-tag stable \
+  --output releases/RE_2026.07.28.01.yml
+```
+
+Every image is resolved to its registry digest. Each `--extra-tag` is recorded only after the command verifies that the tag already points to that same digest. Reconstruction currently has the same single-platform `linux/amd64` restriction as bundle publishing.
 
 ---
 
@@ -821,6 +912,7 @@ steps:
     path: /app
     extract-to: /app
     output: /app/app.self
+    wrap-entrypoint: true
 
   - action: fix-permissions
     path: /app
@@ -867,6 +959,17 @@ steps:
 ```
 
 This pattern is useful when you want to preserve the application payload from the source image, but rebuild the runtime image on a smaller or cleaner base.
+
+```bash
+oci-toolbox copy \
+  --recipe shadow-from-base.yml \
+  --wrap-entrypoint \
+  --reduce-changes \
+  docker://registry.example.com/myapp:latest \
+  docker://registry.example.com/myapp:shadowed
+```
+
+The CLI flag is important in this case: it wraps the `Entrypoint` and `Cmd` from the CLI source image, not the startup metadata of `runtime-base`.
 
 ### OpenShift note
 

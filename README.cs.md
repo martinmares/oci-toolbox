@@ -18,6 +18,8 @@
   - [ls](#ls)
   - [tree](#tree)
   - [Příkaz examples](#příkaz-examples)
+  - [bundle](#bundle)
+  - [release reconstruct](#release-reconstruct)
 - [Credentials](#credentials)
 - [Recipe](#recipe)
   - [Struktura recipe](#struktura-recipe)
@@ -408,6 +410,95 @@ oci-toolbox help examples
 ```
 
 Pokud výstup míří do terminálu, příkazy, YAML klíče, komentáře a nadpisy jsou barevně zvýrazněné. Při pipe nebo přesměrování se vypíše čistý text, takže funguje i `oci-toolbox examples | less` a `oci-toolbox examples > examples.txt`.
+
+### bundle
+
+Bundle je měnitelná deklarace spravovaná v Gitu. Určuje, které tagy nebo digesty image se mají publikovat jako jeden release. Neobsahuje credentials a používá striktní YAML: neznámé položky, duplicitní ID, duplicitní deployment selektory a duplicitní cílové repository jsou odmítnuty.
+
+```yaml
+name: stable
+description: Stable application bundle
+
+registries:
+  source:
+    url: registry-source.example.com
+  target:
+    url: registry-release.example.com
+    project: release
+
+extra_tags:
+  - stable
+
+images:
+  - id: config
+    source:
+      repository: team/config
+      tag: 2.3-latest
+    target:
+      repository: config
+    deployment:
+      app_name: config
+      container_name: config
+```
+
+Každý `source` musí obsahovat právě jednu položku `tag` nebo `digest`. Registry URL a project cesty lze při spuštění nahradit pomocí `--src-registry`, `--dest-registry`, `--src-project` a `--dest-project`.
+
+```bash
+# Lokální validace bez přístupu do registry
+oci-toolbox bundle validate bundle.yml
+
+# Výpis výsledných zdrojových a cílových referencí
+oci-toolbox bundle plan bundle.yml \
+  --release-id RE_2026.07.28.01
+
+# Kopírování image a vytvoření neměnného release záznamu s digesty
+oci-toolbox bundle publish bundle.yml \
+  --release-id RE_2026.07.28.01 \
+  --bundle-revision "$(git rev-parse HEAD)" \
+  --extra-tag candidate \
+  --output releases/RE_2026.07.28.01.yml \
+  --progress
+```
+
+`bundle publish` před kopírováním zkontroluje všechny image. Chybějící primární release tag vytvoří, existující shodný digest považuje za idempotentní opakování a při existujícím tagu s jiným digestem skončí chybou. Extra tagy jako `stable` jsou pohyblivé aliasy. Výstupní soubor nesmí existovat. Git commit, tag ani push záměrně nejsou úlohou `oci-toolbox`; provádí je CI nebo volající skript.
+
+První implementace bundle podporuje pouze samostatné `linux/amd64` image manifesty. OCI indexy a jiné platformy explicitně odmítne.
+
+### release reconstruct
+
+`release reconstruct` vytvoří stejný release manifest s digesty z image, které už v registry existují. Reference lze předat přímo:
+
+```bash
+oci-toolbox release reconstruct \
+  registry.example.com/release/config:RE_2026.07.28.01 \
+  registry.example.com/release/gateway:RE_2026.07.28.01 \
+  --output releases/RE_2026.07.28.01.yml
+```
+
+Každá reference musí obsahovat explicitní tag nebo digest; implicitní `latest` je odmítnut. Pokud všechny reference používají stejný tag, stane se tento tag hodnotou `release_id`. Jinak je nutné předat `--release-id`. Jako `id`, `app_name` a `container_name` se použije název repository.
+
+Pokud se deployment selektory liší od názvů repository, použij striktní YAML vstup:
+
+```yaml
+images:
+  - ref: registry.example.com/release/config:RE_2026.07.28.01
+    id: config
+    app_name: config-service
+    container_name: application
+  - ref: registry.example.com/release/gateway:RE_2026.07.28.01
+    app_name: gateway
+    container_name: gateway
+```
+
+```bash
+oci-toolbox release reconstruct \
+  --file release-images.yml \
+  --release-id RE_2026.07.28.01 \
+  --extra-tag stable \
+  --output releases/RE_2026.07.28.01.yml
+```
+
+Každá image se uloží pomocí digestu získaného z registry. Každý `--extra-tag` se zaznamená pouze tehdy, když příkaz ověří, že už ukazuje na stejný digest. Rekonstrukce má zatím stejné omezení na jednu platformu `linux/amd64` jako publikování bundle.
 
 ---
 
@@ -821,6 +912,7 @@ steps:
     path: /app
     extract-to: /app
     output: /app/app.self
+    wrap-entrypoint: true
 
   - action: fix-permissions
     path: /app
@@ -867,6 +959,17 @@ steps:
 ```
 
 Tenhle pattern se hodí, když chceš zachovat aplikační payload ze source image, ale runtime image postavit na menší nebo čistší base image.
+
+```bash
+oci-toolbox copy \
+  --recipe shadow-from-base.yml \
+  --wrap-entrypoint \
+  --reduce-changes \
+  docker://registry.example.com/myapp:latest \
+  docker://registry.example.com/myapp:shadowed
+```
+
+CLI flag je v tomto případě důležitý: obalí `Entrypoint` a `Cmd` z CLI source image, nikoliv startup metadata z `runtime-base`.
 
 ### Poznámka k OpenShiftu
 
