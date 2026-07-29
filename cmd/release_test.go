@@ -49,6 +49,77 @@ func TestHasExplicitImageIdentifier(t *testing.T) {
 	}
 }
 
+func TestReconstructedTags(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		explicitTag      string
+		releaseID        string
+		discovered       []string
+		requiredExtra    []string
+		discoveryEnabled bool
+		wantTag          string
+		wantExtra        string
+	}{
+		{
+			name:             "disabled preserves existing behavior",
+			explicitTag:      "release-1",
+			discovered:       []string{"release-1", "stable"},
+			requiredExtra:    []string{"candidate"},
+			discoveryEnabled: false,
+			wantTag:          "release-1",
+			wantExtra:        "candidate",
+		},
+		{
+			name:             "explicit input tag wins",
+			explicitTag:      "latest",
+			releaseID:        "release-1",
+			discovered:       []string{"latest", "release-1", "stable"},
+			discoveryEnabled: true,
+			wantTag:          "latest",
+			wantExtra:        "release-1,stable",
+		},
+		{
+			name:             "release ID wins for digest input",
+			releaseID:        "release-1",
+			discovered:       []string{"candidate", "release-1", "stable"},
+			discoveryEnabled: true,
+			wantTag:          "release-1",
+			wantExtra:        "candidate,stable",
+		},
+		{
+			name:             "single discovered tag becomes primary",
+			releaseID:        "release-1",
+			discovered:       []string{"stable"},
+			discoveryEnabled: true,
+			wantTag:          "stable",
+		},
+		{
+			name:             "ambiguous tags remain aliases",
+			releaseID:        "release-1",
+			discovered:       []string{"candidate", "stable"},
+			requiredExtra:    []string{"supported"},
+			discoveryEnabled: true,
+			wantExtra:        "supported,candidate,stable",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tag, extra := reconstructedTags(
+				test.explicitTag,
+				test.releaseID,
+				test.discovered,
+				test.requiredExtra,
+				test.discoveryEnabled,
+			)
+			if tag != test.wantTag {
+				t.Fatalf("tag = %q, want %q", tag, test.wantTag)
+			}
+			if got := strings.Join(extra, ","); got != test.wantExtra {
+				t.Fatalf("extra tags = %q, want %q", got, test.wantExtra)
+			}
+		})
+	}
+}
+
 func TestWriteReleaseManifest(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "releases", "release-1.yml")
 	manifest := &bundle.ReleaseManifest{

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -40,6 +41,40 @@ var (
 	destInsecure     bool
 	destTags         []string
 )
+
+type copyRunOptions struct {
+	RecipePaths      []string
+	SrcCreds         string
+	DestCreds        string
+	Debug            bool
+	DestNoReuse      bool
+	Progress         bool
+	ProgressJSON     bool
+	Reduce           bool
+	ReduceChanges    bool
+	WrapEntrypoint   bool
+	NoWrapEntrypoint bool
+	SrcInsecure      bool
+	DestInsecure     bool
+}
+
+func currentCopyRunOptions() copyRunOptions {
+	return copyRunOptions{
+		RecipePaths:      append([]string(nil), recipePaths...),
+		SrcCreds:         srcCreds,
+		DestCreds:        destCreds,
+		Debug:            debugMode,
+		DestNoReuse:      destNoReuse,
+		Progress:         showProgress,
+		ProgressJSON:     showProgressJSON,
+		Reduce:           reducelayers,
+		ReduceChanges:    reduceChanges,
+		WrapEntrypoint:   wrapEntrypoint,
+		NoWrapEntrypoint: noWrapEntrypoint,
+		SrcInsecure:      srcInsecure,
+		DestInsecure:     destInsecure,
+	}
+}
 
 var copyCmd = &cobra.Command{
 	Use:   "copy SOURCE DESTINATION | copy --batch-file FILE",
@@ -107,7 +142,7 @@ func copyArgs(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCopy(_ *cobra.Command, args []string) error {
+func runCopy(cmd *cobra.Command, args []string) error {
 	src := fromRef
 	dst := toRef
 	if len(args) == 2 {
@@ -139,14 +174,14 @@ func runCopy(_ *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		return runCopyBatch(batch)
+		return runCopyBatch(cmd.Context(), batch)
 	}
 
 	if src == "" || dst == "" {
 		return fmt.Errorf("source and destination are required (provide as positional arguments or --from/--to)")
 	}
 
-	return runCopyOne(src, dst, "", destTags)
+	return runCopyOne(cmd.Context(), src, dst, "", destTags, currentCopyRunOptions())
 }
 
 type copyBatch struct {
@@ -154,11 +189,11 @@ type copyBatch struct {
 }
 
 type copyBatchItem struct {
-	Src         string   `yaml:"src"`
-	Source      string   `yaml:"source"`
-	Dest        string   `yaml:"dest"`
-	Destination string   `yaml:"destination"`
-	DestTags    []string `yaml:"dest_tags"`
+	Src         string   `yaml:"src,omitempty"`
+	Source      string   `yaml:"source,omitempty"`
+	Dest        string   `yaml:"dest,omitempty"`
+	Destination string   `yaml:"destination,omitempty"`
+	DestTags    []string `yaml:"dest_tags,omitempty"`
 }
 
 type copyBatchFailure struct {
@@ -228,19 +263,20 @@ func loadCopyBatch(path string) ([]copyBatchItem, error) {
 	return batch.Copy, nil
 }
 
-func runCopyBatch(batch []copyBatchItem) error {
+func runCopyBatch(ctx context.Context, batch []copyBatchItem) error {
+	opts := currentCopyRunOptions()
 	var failures []copyBatchFailure
 	for i, item := range batch {
 		label := fmt.Sprintf("copy %d/%d", i+1, len(batch))
-		if !showProgress {
+		if !opts.Progress {
 			slog.Info("running batch copy", "job", label, "source", item.source(), "destination", item.target())
 		}
-		if err := runCopyOne(item.source(), item.target(), label, item.DestTags); err != nil {
+		if err := runCopyOne(ctx, item.source(), item.target(), label, item.DestTags, opts); err != nil {
 			failures = append(failures, copyBatchFailure{Index: i + 1, Item: item, Err: err})
 			if !continueOnError {
 				return fmt.Errorf("%s failed: %w", label, err)
 			}
-			if !showProgress {
+			if !opts.Progress {
 				slog.Error("batch copy failed; continuing", "job", label, "source", item.source(), "destination", item.target(), "err", err)
 			}
 		}
@@ -291,13 +327,16 @@ func (i *copyBatchItem) destinations() ([]string, error) {
 	return destinations, nil
 }
 
-func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error {
-	srcOpts := auth.RemoteOptions(parseCreds(srcCreds))
-	dstOpts := auth.RemoteOptions(parseCreds(destCreds))
-	if srcInsecure {
+func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDestTags []string, opts copyRunOptions) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	srcOpts := append(auth.RemoteOptions(parseCreds(opts.SrcCreds)), remote.WithContext(ctx))
+	dstOpts := append(auth.RemoteOptions(parseCreds(opts.DestCreds)), remote.WithContext(ctx))
+	if opts.SrcInsecure {
 		srcOpts = append(srcOpts, auth.InsecureTransport())
 	}
-	if destInsecure {
+	if opts.DestInsecure {
 		dstOpts = append(dstOpts, auth.InsecureTransport())
 	}
 
@@ -323,13 +362,13 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 		}
 	}
 	printTimings := func() {
-		if showProgress {
+		if opts.Progress {
 			if summary := phaseTimer.Summary(); summary != "" {
 				fmt.Fprint(os.Stderr, summary)
 			}
 		}
 	}
-	if showProgress {
+	if opts.Progress {
 		srcLabel := shortRef(src)
 		switch {
 		case isFileDst:
@@ -349,7 +388,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 		if srcCh != nil && !srcIsDaemon && !srcIsFile {
 			srcOpts = append(srcOpts, remote.WithProgress(srcCh))
 		}
-	} else if showProgressJSON {
+	} else if opts.ProgressJSON {
 		jsonEmitter = progress.NewJSONEmitter(os.Stdout)
 		srcCh = jsonEmitter.Channel("pull")
 		switch {
@@ -374,7 +413,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 	if srcIsFile {
 		filePath := strings.TrimPrefix(src, "file://")
 		srcLabel = filePath
-		if debugMode {
+		if opts.Debug {
 			slog.Debug("loading source image from Docker archive", "path", filePath)
 		}
 		setPhase("loading source image from Docker archive")
@@ -399,7 +438,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 			return fmt.Errorf("invalid daemon source reference: %w", err)
 		}
 		srcLabel = srcTag.String()
-		if debugMode {
+		if opts.Debug {
 			slog.Debug("loading source image from daemon", "ref", srcTag.String())
 		}
 		setPhase("loading source image from docker daemon")
@@ -424,7 +463,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 			return fmt.Errorf("invalid source reference: %w", err)
 		}
 		srcLabel = srcParsed.String()
-		if debugMode {
+		if opts.Debug {
 			slog.Debug("pulling source image", "ref", srcParsed.String())
 		}
 		setPhase("pulling source image")
@@ -443,7 +482,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 
 	// go-containerregistry pull is lazy — remote.WithProgress only fires during push (write.go).
 	// For pull progress we manually stream all layers and report bytes to srcCh ourselves.
-	if shouldEagerPull(isFileDst, showProgress, showProgressJSON) {
+	if shouldEagerPull(isFileDst, opts.Progress, opts.ProgressJSON) {
 		if err := eagerPull(img, srcCh); err != nil {
 			closeProg(srcCh, dstCh)
 			if jsonEmitter != nil {
@@ -454,7 +493,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 	}
 	sourceImg := img
 	var shadowEntrypointOverride *recipe.ShadowEntrypointOverride
-	if wrapEntrypoint {
+	if opts.WrapEntrypoint {
 		sourceCfg, cfgErr := sourceImg.ConfigFile()
 		if cfgErr != nil {
 			closeProg(srcCh, dstCh)
@@ -468,17 +507,17 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 
 	// --- apply recipes ---
 	var reduceBase v1.Image
-	for _, path := range recipePaths {
+	for _, path := range opts.RecipePaths {
 		r, err := recipe.Load(path)
 		if err != nil {
 			closeProg(srcCh, dstCh)
 			return err
 		}
-		if wrapEntrypoint || noWrapEntrypoint {
-			setShadowEntrypointWrapping(r, wrapEntrypoint)
+		if opts.WrapEntrypoint || opts.NoWrapEntrypoint {
+			setShadowEntrypointWrapping(r, opts.WrapEntrypoint)
 		}
 
-		if !showProgress {
+		if !opts.Progress {
 			slog.Info("applying recipe", "name", r.Name)
 		}
 
@@ -534,8 +573,8 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 	}
 
 	// --- squash layers if requested ---
-	if reducelayers {
-		if !showProgress {
+	if opts.Reduce {
+		if !opts.Progress {
 			slog.Info("reducing layers")
 		}
 		setPhase("squashing layers")
@@ -553,8 +592,8 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 	}
 
 	// --- reduce recipe changes if requested ---
-	if reduceChanges {
-		if !showProgress {
+	if opts.ReduceChanges {
+		if !opts.Progress {
 			slog.Info("reducing recipe changes")
 		}
 		setPhase("reducing recipe changes")
@@ -577,13 +616,13 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 	// --- push destination ---
 	if strings.HasPrefix(dst, "file://") {
 		filePath := strings.TrimPrefix(dst, "file://")
-		// use source reference as image tag inside the tarball
-		tag, tagErr := name.NewTag(stripScheme(src))
+		// Docker archives require a tag even when the source was addressed by digest.
+		tag, tagErr := tarballTag(stripScheme(src))
 		if tagErr != nil {
 			closeProg(nil, dstCh)
 			return fmt.Errorf("deriving tag from source: %w", tagErr)
 		}
-		if debugMode {
+		if opts.Debug {
 			slog.Debug("writing tarball", "path", filePath, "tag", tag.String())
 		}
 		setPhase("writing tarball")
@@ -623,7 +662,7 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 			}
 			return fmt.Errorf("invalid daemon destination reference: %w", err)
 		}
-		if debugMode {
+		if opts.Debug {
 			slog.Debug("loading image into docker daemon", "ref", dstTag.String())
 		}
 		setPhase("loading image into docker daemon")
@@ -663,14 +702,14 @@ func runCopyOne(src, dst, batchLabel string, additionalDestTags []string) error 
 	}
 
 	writeOpts := dstOpts
-	if destNoReuse {
+	if opts.DestNoReuse {
 		img = image.WithoutMountReuse(img)
 	}
 	if dstCh != nil {
 		writeOpts = append(writeOpts, remote.WithProgress(dstCh))
 	}
 
-	if debugMode {
+	if opts.Debug {
 		slog.Debug("pushing destination image", "ref", dstParsed.String())
 	}
 	setPhase("pushing destination image")
@@ -839,6 +878,17 @@ func parseDaemonTag(ref string) (name.Tag, error) {
 	ref = strings.TrimPrefix(ref, "docker-daemon://")
 	ref = strings.TrimPrefix(ref, "daemon://")
 	return name.NewTag(ref, name.WeakValidation)
+}
+
+func tarballTag(refValue string) (name.Tag, error) {
+	ref, err := name.ParseReference(refValue, name.WeakValidation)
+	if err != nil {
+		return name.Tag{}, err
+	}
+	if tag, ok := ref.(name.Tag); ok {
+		return tag, nil
+	}
+	return ref.Context().Tag("snapshot"), nil
 }
 
 func parseCreds(s string) *auth.Options {

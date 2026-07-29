@@ -20,6 +20,9 @@
   - [Příkaz examples](#příkaz-examples)
   - [bundle](#bundle)
   - [release reconstruct](#release-reconstruct)
+  - [Údržba registry](#údržba-registry)
+  - [Snapshot Kubernetes images](#snapshot-kubernetes-images)
+- [Git repository pro releases](#git-repository-pro-releases)
 - [Credentials](#credentials)
 - [Recipe](#recipe)
   - [Struktura recipe](#struktura-recipe)
@@ -472,7 +475,9 @@ První implementace bundle podporuje pouze samostatné `linux/amd64` image manif
 oci-toolbox release reconstruct \
   registry.example.com/release/config:RE_2026.07.28.01 \
   registry.example.com/release/gateway:RE_2026.07.28.01 \
-  --output releases/RE_2026.07.28.01.yml
+  --output releases/RE_2026.07.28.01.yml \
+  --discover-tags \
+  --progress
 ```
 
 Každá reference musí obsahovat explicitní tag nebo digest; implicitní `latest` je odmítnut. Pokud všechny reference používají stejný tag, stane se tento tag hodnotou `release_id`. Jinak je nutné předat `--release-id`. Jako `id`, `app_name` a `container_name` se použije název repository.
@@ -498,7 +503,104 @@ oci-toolbox release reconstruct \
   --output releases/RE_2026.07.28.01.yml
 ```
 
-Každá image se uloží pomocí digestu získaného z registry. Každý `--extra-tag` se zaznamená pouze tehdy, když příkaz ověří, že už ukazuje na stejný digest. Rekonstrukce má zatím stejné omezení na jednu platformu `linux/amd64` jako publikování bundle.
+Každá image se uloží pomocí digestu získaného z registry. Vyhledání tagů je explicitní: `--discover-tags` načte tagy repository, ověří jejich digesty a zaznamená všechny tagy ukazující na stejný digest. Explicitní vstupní tag zůstane primárním `tag`; u vstupu s digestem dostane přednost tag shodný s `release_id`, potom jediný jednoznačný nalezený tag. Ostatní shody se uloží do `extra_tags` konkrétní image. Každý `--extra-tag` se zaznamená pouze tehdy, když příkaz ověří, že už ukazuje na stejný digest. `--progress` zobrazí počet zkontrolovaných images, rychlost a ETA. Samostatná image zapíše skutečné `os/architecture`; OCI index se uzamkne digestem celého indexu a zapíše se jako `platform: multi-platform`. Pokud vstup kombinuje různé typy platforem, společná platforma na úrovni manifestu se vynechá.
+
+### Údržba registry
+
+Údržba registry používá striktní YAML konfiguraci. Credentials neukládej do Gitu; předej je pomocí `--creds`, případně přes proměnné prostředí expandované ve starší kompatibilní konfiguraci.
+
+```yaml
+# oci-toolbox-registry.yml
+registry:
+  url: https://registry.example.com
+
+cleanup:
+  mode: created
+  keep_count: 14
+  protect_latest: true
+  protect_tag_patterns:
+    - "^stable$"
+
+repositories:
+  - name: team/api
+  - name: team/ui
+```
+
+```bash
+# Tagy, digesty, čas vytvoření a deduplikované velikosti.
+oci-toolbox registry info \
+  --config oci-toolbox-registry.yml \
+  --creds user:password
+
+# Repository dostupné přes registry catalog API.
+oci-toolbox registry list-repositories \
+  --config oci-toolbox-registry.yml
+
+# Vygeneruje vstup pro: oci-toolbox copy --batch-file images.yml
+oci-toolbox registry copy-plan \
+  --config oci-toolbox-registry.yml \
+  --dest-registry mirror.example.com \
+  --output images.yml
+
+# Bezpečný náhled, který nic nesmaže.
+oci-toolbox registry cleanup --config oci-toolbox-registry.yml
+
+# Provede vypsaný cleanup plán.
+oci-toolbox registry cleanup --config oci-toolbox-registry.yml --apply
+```
+
+Cleanup pracuje s unikátními manifest digesty, takže více tagů stejné image nepočítá jako samostatné image. `mode: timestamp` řadí tagy odpovídající `YYYY.MM.DD.BUILD`; `mode: created` používá čas z image konfigurace. Chráněný tag zachová celý příslušný manifest digest. Registry příkazy podporují také `--insecure`, `--ca-cert`, `--timeout`, filtrování repository a ignorování chybějících repository.
+
+### Snapshot Kubernetes images
+
+`snapshot create` načte reference container a init-container images ze všech Deploymentů v Kubernetes namespace a uloží Docker archivy spolu s průběžně zapisovaným YAML manifestem. Přenos probíhá přímo přes vestavěný copy engine; není potřeba Docker daemon ani druhý proces `oci-toolbox`.
+
+```bash
+# Použije current-context z kubeconfigu.
+oci-toolbox snapshot create \
+  --namespace example \
+  --output-dir ./snapshots \
+  --src-creds user:password
+
+# Volitelný glob; * odpovídá i / a vyhodnocuje se nad celou image referencí.
+oci-toolbox snapshot create \
+  --namespace example \
+  '*/team/docs-*:*'
+
+# Obnoví každý archiv na původní image referenci.
+oci-toolbox snapshot restore \
+  --namespace example \
+  --dest-creds user:password \
+  ./snapshots/example/20260728-120000.yml
+```
+
+Manifest zůstává `complete: false`, dokud nejsou zapsány všechny archivy. Restore odmítne nekompletní manifest, jiný namespace, path traversal i archiv se změněnou velikostí nebo SHA-256 checksumem. Zdroj zadaný digestem se obnoví přes deterministický tag `snapshot-<digest>`, takže původní digest reference začne být znovu dostupná. Pro Kubernetes přístup slouží `--kubeconfig`, `--context` a `--kube-insecure`; registry TLS má oddělené flagy `--src-insecure` a `--dest-insecure`.
+
+---
+
+## Git repository pro releases
+
+Bundle deklarace a vygenerované release manifesty ukládej do samostatného Git repository s názvem `tsm-releases`:
+
+```text
+tsm-releases/
+├── README.md
+├── bundles/
+│   ├── stable.yml
+│   ├── candidate.yml
+│   └── development.yml
+└── releases/
+    ├── RE_2026.06.25.01.yml
+    └── RE_2026.07.29.01.yml
+```
+
+Mentální model je záměrně jednoduchý:
+
+- `bundles/` říká, **co chceme vydat**. Jde o měnitelné deklarace spravované běžnými Git změnami a review.
+- `releases/` říká, **co přesně bylo vydáno**. Soubory obsahují vyhodnocené image digesty a považují se za neměnné.
+- Git historie říká, **kdo, co a kdy změnil nebo vygeneroval**.
+
+`oci-toolbox` tyto YAML soubory čte a generuje, ale záměrně neprovádí Git commit, tag ani push. Tyto operace zůstávají úlohou CI/CD nebo release operátora.
 
 ---
 

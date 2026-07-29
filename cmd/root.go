@@ -21,8 +21,8 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "oci-toolbox",
 	Short: "Toolbox for inspecting, transferring, and modifying OCI images",
-	Long: `oci-toolbox inspects and transfers OCI images and applies recipes
-to modify them in-flight — without requiring a Docker daemon.`,
+	Long: `oci-toolbox inspects, transfers, and modifies OCI images, maintains
+registries, and snapshots Kubernetes deployment images without requiring a Docker daemon.`,
 	// --version flag (skopeo-compatible: prints "oci-toolbox version X.Y.Z")
 	Version:      version,
 	SilenceUsage: true,

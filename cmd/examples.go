@@ -72,7 +72,9 @@ oci-toolbox bundle publish bundle.yml \
 oci-toolbox release reconstruct \
   registry.example.com/release/api:RE_2026.07.28.01 \
   registry.example.com/release/ui:RE_2026.07.28.01 \
-  --output releases/RE_2026.07.28.01.yml
+  --output releases/RE_2026.07.28.01.yml \
+  --discover-tags \
+  --progress
 
 # Use a strict YAML input when deployment names differ from repository names.
 # release-images.yml
@@ -84,8 +86,42 @@ images:
 
 oci-toolbox release reconstruct \
   --file release-images.yml \
-  --release-id RE_2026.07.28.01 \
-  --output releases/RE_2026.07.28.01.yml`, color)
+	--release-id RE_2026.07.28.01 \
+	--output releases/RE_2026.07.28.01.yml`, color)
+
+	section(w, "Inspect and clean a registry", color)
+	codeBlock(w, `# oci-toolbox-registry.yml
+registry:
+  url: https://registry.example.com
+cleanup:
+  mode: created
+  keep_count: 14
+  protect_latest: true
+  protect_tag_patterns:
+    - "^stable$"
+repositories:
+  - name: team/api
+  - name: team/ui
+
+# Inspect repository metadata and generate a batch copy file.
+oci-toolbox registry info --config oci-toolbox-registry.yml --creds user:password
+oci-toolbox registry copy-plan --config oci-toolbox-registry.yml \
+  --dest-registry mirror.example.com --output images.yml
+
+# Cleanup is a dry-run unless --apply is explicitly supplied.
+oci-toolbox registry cleanup --config oci-toolbox-registry.yml
+oci-toolbox registry cleanup --config oci-toolbox-registry.yml --apply`, color)
+
+	section(w, "Snapshot Kubernetes deployment images", color)
+	codeBlock(w, `# Save every image referenced by Deployments in a namespace.
+oci-toolbox snapshot create --namespace example --output-dir ./snapshots
+
+# Restrict the snapshot with a glob evaluated against the complete image reference.
+oci-toolbox snapshot create --namespace example '*/team/docs-*:*'
+
+# Verify archive checksums and restore every image to its original reference.
+oci-toolbox snapshot restore --namespace example \
+  ./snapshots/example/20260728-120000.yml`, color)
 
 	section(w, "Java application", color)
 	codeBlock(w, `# app.yml: add an application, make /app writable for the runtime user, and set startup metadata.

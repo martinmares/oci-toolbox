@@ -20,6 +20,9 @@
   - [examples](#examples-command)
   - [bundle](#bundle)
   - [release reconstruct](#release-reconstruct)
+  - [registry maintenance](#registry-maintenance)
+  - [Kubernetes image snapshots](#kubernetes-image-snapshots)
+- [Git release repository](#git-release-repository)
 - [Credentials](#credentials)
 - [Recipes](#recipes)
   - [Recipe structure](#recipe-structure)
@@ -472,7 +475,9 @@ The initial bundle implementation supports only single-platform `linux/amd64` im
 oci-toolbox release reconstruct \
   registry.example.com/release/config:RE_2026.07.28.01 \
   registry.example.com/release/gateway:RE_2026.07.28.01 \
-  --output releases/RE_2026.07.28.01.yml
+  --output releases/RE_2026.07.28.01.yml \
+  --discover-tags \
+  --progress
 ```
 
 Every reference must contain an explicit tag or digest; an implicit `latest` is rejected. When every reference uses the same tag, that tag becomes `release_id`. Otherwise, pass `--release-id`. The repository basename is used as `id`, `app_name`, and `container_name`.
@@ -498,7 +503,104 @@ oci-toolbox release reconstruct \
   --output releases/RE_2026.07.28.01.yml
 ```
 
-Every image is resolved to its registry digest. Each `--extra-tag` is recorded only after the command verifies that the tag already points to that same digest. Reconstruction currently has the same single-platform `linux/amd64` restriction as bundle publishing.
+Every image is resolved to its registry digest. Tag discovery is opt-in: `--discover-tags` lists the repository tags, resolves them, and records every tag that points to the same digest. An explicit input tag remains the primary `tag`; for digest inputs, a discovered tag equal to `release_id` is preferred, followed by a single unambiguous matching tag. Other matches are stored in the image's `extra_tags`. Each `--extra-tag` is recorded only after the command verifies that the tag already points to that same digest. Use `--progress` to show the number of inspected images, throughput, and ETA. Single images record their actual `os/architecture`; OCI indexes are locked by the index digest and recorded as `platform: multi-platform`. The manifest-level platform is omitted when the inputs mix platform types.
+
+### registry maintenance
+
+Registry maintenance uses a strict YAML configuration. Keep credentials outside Git and pass them with `--creds` or environment-expanded values when compatibility with an existing configuration is required.
+
+```yaml
+# oci-toolbox-registry.yml
+registry:
+  url: https://registry.example.com
+
+cleanup:
+  mode: created
+  keep_count: 14
+  protect_latest: true
+  protect_tag_patterns:
+    - "^stable$"
+
+repositories:
+  - name: team/api
+  - name: team/ui
+```
+
+```bash
+# Inspect tags, digests, creation timestamps, and deduplicated sizes.
+oci-toolbox registry info \
+  --config oci-toolbox-registry.yml \
+  --creds user:password
+
+# List repositories exposed by the registry catalog API.
+oci-toolbox registry list-repositories \
+  --config oci-toolbox-registry.yml
+
+# Generate a file accepted by: oci-toolbox copy --batch-file images.yml
+oci-toolbox registry copy-plan \
+  --config oci-toolbox-registry.yml \
+  --dest-registry mirror.example.com \
+  --output images.yml
+
+# Safe preview. No manifests are deleted.
+oci-toolbox registry cleanup --config oci-toolbox-registry.yml
+
+# Apply the displayed cleanup plan.
+oci-toolbox registry cleanup --config oci-toolbox-registry.yml --apply
+```
+
+Cleanup works with unique manifest digests rather than counting aliases as separate images. `mode: timestamp` orders tags matching `YYYY.MM.DD.BUILD`; `mode: created` uses image configuration timestamps. Protected tags preserve their complete manifest digest. Registry operations also support `--insecure`, `--ca-cert`, `--timeout`, repository filtering, and missing-repository handling.
+
+### Kubernetes image snapshots
+
+`snapshot create` reads container and init-container image references from every Deployment in a Kubernetes namespace and saves Docker archives plus an incremental YAML manifest. Transfers run directly through the built-in copy engine; no Docker daemon or second `oci-toolbox` process is required.
+
+```bash
+# Use current-context from kubeconfig.
+oci-toolbox snapshot create \
+  --namespace example \
+  --output-dir ./snapshots \
+  --src-creds user:password
+
+# Optional glob; * also crosses / and is matched against the full image reference.
+oci-toolbox snapshot create \
+  --namespace example \
+  '*/team/docs-*:*'
+
+# Restore every archive to the original image reference.
+oci-toolbox snapshot restore \
+  --namespace example \
+  --dest-creds user:password \
+  ./snapshots/example/20260728-120000.yml
+```
+
+The manifest remains `complete: false` until every archive is written. Restore rejects incomplete manifests, namespace mismatches, path traversal, and archives whose size or SHA-256 checksum changed. A digest-addressed source is restored through a deterministic `snapshot-<digest>` tag so the original digest reference becomes available again. Use `--kubeconfig`, `--context`, and `--kube-insecure` for Kubernetes access; registry TLS has separate `--src-insecure` and `--dest-insecure` flags.
+
+---
+
+## Git release repository
+
+Keep bundle declarations and generated release manifests in a dedicated Git repository named `tsm-releases`:
+
+```text
+tsm-releases/
+├── README.md
+├── bundles/
+│   ├── stable.yml
+│   ├── candidate.yml
+│   └── development.yml
+└── releases/
+    ├── RE_2026.06.25.01.yml
+    └── RE_2026.07.29.01.yml
+```
+
+The mental model is intentionally simple:
+
+- `bundles/` describes **what should be released**. These files are mutable declarations managed through normal Git changes and reviews.
+- `releases/` records **what was actually released**. These files contain resolved image digests and should be treated as immutable.
+- Git history records **who changed or generated what, and when**.
+
+`oci-toolbox` reads and generates these YAML files but deliberately does not commit, tag, or push the repository. Those operations remain the responsibility of CI/CD or the release operator.
 
 ---
 

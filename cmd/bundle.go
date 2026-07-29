@@ -177,19 +177,18 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	srcCreds = bundlePublishOptions.srcCreds
-	destCreds = bundlePublishOptions.destCreds
-	srcInsecure = bundlePublishOptions.srcInsecure
-	destInsecure = bundlePublishOptions.destInsecure
-	showProgress = bundlePublishOptions.progress
-	showProgressJSON = false
-	debugMode = bundlePublishOptions.debug
-	recipePaths = nil
-	reducelayers = false
-	reduceChanges = false
-	wrapEntrypoint = false
-	noWrapEntrypoint = false
-	destNoReuse = false
+	copyOpts := copyRunOptions{
+		SrcCreds:      bundlePublishOptions.srcCreds,
+		DestCreds:     bundlePublishOptions.destCreds,
+		SrcInsecure:   bundlePublishOptions.srcInsecure,
+		DestInsecure:  bundlePublishOptions.destInsecure,
+		Progress:      bundlePublishOptions.progress,
+		Debug:         bundlePublishOptions.debug,
+		RecipePaths:   nil,
+		DestNoReuse:   false,
+		Reduce:        false,
+		ReduceChanges: false,
+	}
 
 	manifest := &bundle.ReleaseManifest{
 		ReleaseID:    plan.ReleaseID,
@@ -211,7 +210,7 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 			slog.Info("destination already matches source digest", "image", item.ID, "destination", item.TargetRef)
 		} else {
 			label := fmt.Sprintf("bundle %d/%d", i+1, len(preflight))
-			if err := runCopyOne("docker://"+sourceDigestRef, "docker://"+item.TargetRef, label, item.ExtraTags); err != nil {
+			if err := runCopyOne(cmd.Context(), "docker://"+sourceDigestRef, "docker://"+item.TargetRef, label, item.ExtraTags, copyOpts); err != nil {
 				return fmt.Errorf("publishing image %q: %w", item.ID, err)
 			}
 		}
@@ -259,11 +258,7 @@ func registryOptions(creds string, insecure bool) []remote.Option {
 }
 
 func fetchImageManifest(refValue string, opts []remote.Option) (*remote.Descriptor, error) {
-	ref, err := name.ParseReference(stripScheme(refValue))
-	if err != nil {
-		return nil, fmt.Errorf("invalid image reference: %w", err)
-	}
-	desc, err := remote.Get(ref, opts...)
+	desc, err := fetchManifestDescriptor(refValue, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +268,19 @@ func fetchImageManifest(refValue string, opts []remote.Option) (*remote.Descript
 			desc.Digest,
 		)
 	}
-	if !desc.MediaType.IsImage() {
+	return desc, nil
+}
+
+func fetchManifestDescriptor(refValue string, opts []remote.Option) (*remote.Descriptor, error) {
+	ref, err := name.ParseReference(stripScheme(refValue))
+	if err != nil {
+		return nil, fmt.Errorf("invalid image reference: %w", err)
+	}
+	desc, err := remote.Get(ref, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if !desc.MediaType.IsImage() && !desc.MediaType.IsIndex() {
 		return nil, fmt.Errorf("unsupported manifest media type %s", desc.MediaType)
 	}
 	return desc, nil
@@ -292,6 +299,17 @@ func fetchOptionalManifest(refValue string, opts []remote.Option) (*remote.Descr
 }
 
 func verifiedPlatform(desc *remote.Descriptor) (string, error) {
+	platform, err := detectedPlatform(desc)
+	if err != nil {
+		return "", err
+	}
+	if platform != "linux/amd64" {
+		return "", fmt.Errorf("unsupported platform %q; only linux/amd64 is supported", platform)
+	}
+	return platform, nil
+}
+
+func detectedPlatform(desc *remote.Descriptor) (string, error) {
 	img, err := desc.Image()
 	if err != nil {
 		return "", fmt.Errorf("reading image config: %w", err)
@@ -301,8 +319,8 @@ func verifiedPlatform(desc *remote.Descriptor) (string, error) {
 		return "", fmt.Errorf("reading image config: %w", err)
 	}
 	platform := strings.Trim(cfg.OS+"/"+cfg.Architecture, "/")
-	if platform != "linux/amd64" {
-		return "", fmt.Errorf("unsupported platform %q; only linux/amd64 is supported", platform)
+	if platform == "" {
+		return "", fmt.Errorf("image config does not specify OS or architecture")
 	}
 	return platform, nil
 }

@@ -1,15 +1,19 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/spf13/cobra"
@@ -120,19 +124,29 @@ images:
 	}
 
 	reconstructOutput := filepath.Join(t.TempDir(), "reconstructed.yml")
-	reconstructOptions = struct {
-		file      string
-		output    string
-		releaseID string
-		creds     string
-		insecure  bool
-		extraTags []string
-	}{
-		output:    reconstructOutput,
-		insecure:  true,
-		extraTags: []string{"stable"},
+	targetDigestRef, err := name.NewDigest(
+		serverURL.Host+"/release/api@"+sourceDigest.String(),
+		name.Insecure,
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := runReleaseReconstruct(cmd, []string{targetRef.String()}); err != nil {
+	reconstructOptions = struct {
+		file         string
+		output       string
+		releaseID    string
+		creds        string
+		insecure     bool
+		progress     bool
+		discoverTags bool
+		extraTags    []string
+	}{
+		output:       reconstructOutput,
+		releaseID:    "release-1",
+		insecure:     true,
+		discoverTags: true,
+	}
+	if err := runReleaseReconstruct(cmd, []string{targetDigestRef.String()}); err != nil {
 		t.Fatalf("reconstruct: %v", err)
 	}
 	reconstructed := readReleaseManifest(t, reconstructOutput)
@@ -141,6 +155,81 @@ images:
 	}
 	if len(reconstructed.Images) != 1 || reconstructed.Images[0].Digest != sourceDigest.String() {
 		t.Fatalf("reconstructed images = %#v", reconstructed.Images)
+	}
+	if reconstructed.Images[0].Tag != "release-1" {
+		t.Fatalf("reconstructed tag = %q", reconstructed.Images[0].Tag)
+	}
+	if got := strings.Join(reconstructed.Images[0].ExtraTags, ","); got != "stable" {
+		t.Fatalf("reconstructed extra tags = %q", got)
+	}
+
+	armImage := testutil.NewImageWithFiles(t, map[string][]byte{"app.txt": []byte("arm")})
+	armConfig, err := armImage.ConfigFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	armConfig.OS = "linux"
+	armConfig.Architecture = "arm64"
+	armImage, err = mutate.ConfigFile(armImage, armConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := mutate.AppendManifests(
+		empty.Index,
+		mutate.IndexAddendum{
+			Add: sourceImage,
+			Descriptor: v1.Descriptor{
+				Platform: &v1.Platform{OS: "linux", Architecture: "amd64"},
+			},
+		},
+		mutate.IndexAddendum{
+			Add: armImage,
+			Descriptor: v1.Descriptor{
+				Platform: &v1.Platform{OS: "linux", Architecture: "arm64"},
+			},
+		},
+	)
+	indexRef, err := name.NewTag(serverURL.Host+"/release/multi:latest", name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.WriteIndex(indexRef, index); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	indexDigest, err := index.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	multiOutput := filepath.Join(t.TempDir(), "multi.yml")
+	reconstructOptions = struct {
+		file         string
+		output       string
+		releaseID    string
+		creds        string
+		insecure     bool
+		progress     bool
+		discoverTags bool
+		extraTags    []string
+	}{
+		output:   multiOutput,
+		insecure: true,
+		progress: true,
+	}
+	var progressOutput bytes.Buffer
+	cmd.SetErr(&progressOutput)
+	if err := runReleaseReconstruct(cmd, []string{indexRef.String()}); err != nil {
+		t.Fatalf("reconstruct index: %v", err)
+	}
+	multi := readReleaseManifest(t, multiOutput)
+	if multi.Platform != "multi-platform" ||
+		len(multi.Images) != 1 ||
+		multi.Images[0].Platform != "multi-platform" ||
+		multi.Images[0].Digest != indexDigest.String() {
+		t.Fatalf("multi-platform manifest = %#v", multi)
+	}
+	if !bytes.Contains(progressOutput.Bytes(), []byte("100%")) {
+		t.Fatalf("progress output = %q", progressOutput.String())
 	}
 }
 
