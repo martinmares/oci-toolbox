@@ -16,10 +16,11 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/martinmares/oci-toolbox/internal/bundle"
+	"github.com/martinmares/oci-toolbox/internal/kubeimages"
 	"github.com/martinmares/oci-toolbox/internal/progress"
 )
 
-var reconstructOptions struct {
+type releaseReconstructOptions struct {
 	file         string
 	output       string
 	releaseID    string
@@ -28,7 +29,14 @@ var reconstructOptions struct {
 	progress     bool
 	discoverTags bool
 	extraTags    []string
+	namespace    string
+	kubeconfig   string
+	kubeContext  string
+	kubeInsecure bool
+	imagePrefix  string
 }
+
+var reconstructOptions releaseReconstructOptions
 
 var releaseCmd = &cobra.Command{
 	Use:   "release",
@@ -41,6 +49,14 @@ var releaseReconstructCmd = &cobra.Command{
 	Args:  cobra.ArbitraryArgs,
 	RunE:  runReleaseReconstruct,
 	Example: `  oci-toolbox release reconstruct \
+    --namespace example \
+    --image-prefix registry.example.com/team \
+    --release-id RE_2026.07.07.01 \
+    --output release.yml \
+    --discover-tags \
+    --progress
+
+  oci-toolbox release reconstruct \
     registry.example.com/team/api:RE_2026.07.07.01 \
     registry.example.com/team/ui:RE_2026.07.07.01 \
     --release-id RE_2026.07.07.01 \
@@ -60,6 +76,11 @@ func init() {
 	releaseReconstructCmd.Flags().BoolVar(&reconstructOptions.progress, "progress", false, "show image inspection progress and ETA")
 	releaseReconstructCmd.Flags().BoolVar(&reconstructOptions.discoverTags, "discover-tags", false, "discover registry tags that point to each resolved digest")
 	releaseReconstructCmd.Flags().StringArrayVar(&reconstructOptions.extraTags, "extra-tag", nil, "record an additional release tag (repeatable)")
+	releaseReconstructCmd.Flags().StringVarP(&reconstructOptions.namespace, "namespace", "n", "", "reconstruct deployment selectors from a Kubernetes namespace")
+	releaseReconstructCmd.Flags().StringVar(&reconstructOptions.kubeconfig, "kubeconfig", "", "kubeconfig path; defaults to KUBECONFIG or ~/.kube/config")
+	releaseReconstructCmd.Flags().StringVar(&reconstructOptions.kubeContext, "context", "", "Kubernetes context override")
+	releaseReconstructCmd.Flags().BoolVar(&reconstructOptions.kubeInsecure, "kube-insecure", false, "skip Kubernetes API TLS certificate verification")
+	releaseReconstructCmd.Flags().StringVar(&reconstructOptions.imagePrefix, "image-prefix", "", "include only Kubernetes images under this registry/repository prefix")
 	releaseCmd.AddCommand(releaseReconstructCmd)
 	rootCmd.AddCommand(releaseCmd)
 }
@@ -71,7 +92,7 @@ func runReleaseReconstruct(cmd *cobra.Command, args []string) error {
 	if err := ensureReleaseOutputAvailable(reconstructOptions.output); err != nil {
 		return err
 	}
-	items, err := reconstructItems(args, reconstructOptions.file)
+	items, err := loadReconstructItems(cmd.Context(), args, reconstructOptions)
 	if err != nil {
 		return err
 	}
@@ -377,4 +398,88 @@ func reconstructItems(args []string, file string) ([]bundle.ReconstructImage, er
 		return nil, fmt.Errorf("parsing reconstruct file %q: %w", file, err)
 	}
 	return input.Images, nil
+}
+
+func loadReconstructItems(
+	ctx context.Context,
+	args []string,
+	opts releaseReconstructOptions,
+) ([]bundle.ReconstructImage, error) {
+	namespace := strings.TrimSpace(opts.namespace)
+	if namespace == "" {
+		if opts.kubeconfig != "" || opts.kubeContext != "" || opts.kubeInsecure || strings.TrimSpace(opts.imagePrefix) != "" {
+			return nil, errors.New("--kubeconfig, --context, --kube-insecure, and --image-prefix require --namespace")
+		}
+		return reconstructItems(args, opts.file)
+	}
+	if strings.TrimSpace(opts.file) != "" || len(args) > 0 {
+		return nil, errors.New("--namespace cannot be combined with --file or positional IMAGE arguments")
+	}
+	client, err := kubeimages.New(kubeimages.Options{
+		Kubeconfig: opts.kubeconfig,
+		Context:    opts.kubeContext,
+		Insecure:   opts.kubeInsecure,
+	})
+	if err != nil {
+		return nil, err
+	}
+	images, err := client.ListDeploymentImages(ctx, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("listing deployments in namespace %q: %w", namespace, err)
+	}
+	if len(images) == 0 {
+		return nil, fmt.Errorf("namespace %q contains no deployment container images", namespace)
+	}
+	if prefix := normalizeImagePrefix(opts.imagePrefix); prefix != "" {
+		images = filterDeploymentImages(images, prefix)
+		if len(images) == 0 {
+			return nil, fmt.Errorf(
+				"namespace %q contains no deployment container images matching --image-prefix %q",
+				namespace,
+				prefix,
+			)
+		}
+	}
+	return reconstructDeploymentItems(images), nil
+}
+
+func normalizeImagePrefix(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	return strings.TrimRight(stripScheme(value), "/")
+}
+
+func filterDeploymentImages(
+	images []kubeimages.DeploymentImage,
+	prefix string,
+) []kubeimages.DeploymentImage {
+	filtered := make([]kubeimages.DeploymentImage, 0, len(images))
+	for _, image := range images {
+		ref := stripScheme(strings.TrimSpace(image.Image))
+		if ref == prefix ||
+			strings.HasPrefix(ref, prefix+"/") ||
+			strings.HasPrefix(ref, prefix+":") ||
+			strings.HasPrefix(ref, prefix+"@") {
+			filtered = append(filtered, image)
+		}
+	}
+	return filtered
+}
+
+func reconstructDeploymentItems(images []kubeimages.DeploymentImage) []bundle.ReconstructImage {
+	items := make([]bundle.ReconstructImage, 0, len(images))
+	for _, image := range images {
+		id := image.AppName
+		if image.ContainerName != image.AppName {
+			id += "/" + image.ContainerName
+		}
+		items = append(items, bundle.ReconstructImage{
+			Ref:           image.Image,
+			ID:            id,
+			AppName:       image.AppName,
+			ContainerName: image.ContainerName,
+		})
+	}
+	return items
 }

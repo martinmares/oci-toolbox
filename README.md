@@ -482,6 +482,22 @@ oci-toolbox release reconstruct \
 
 Every reference must contain an explicit tag or digest; an implicit `latest` is rejected. When every reference uses the same tag, that tag becomes `release_id`. Otherwise, pass `--release-id`. The repository basename is used as `id`, `app_name`, and `container_name`.
 
+For an initial manifest reconstructed from an existing Kubernetes environment, read the Deployment selectors directly from the API:
+
+```bash
+oci-toolbox release reconstruct \
+  --namespace example \
+  --image-prefix registry.example.com/team \
+  --release-id RE_2026.07.28.01 \
+  --kube-insecure \
+  --insecure \
+  --output releases/RE_2026.07.28.01.yml \
+  --discover-tags \
+  --progress
+```
+
+This mode records `app_name` from the Deployment name and `container_name` from each regular container in its pod template. It preserves repeated use of the same image under different selectors. Init containers are not included. Use `--image-prefix` to exclude platform and operator images outside the selected registry or repository path before registry inspection starts. The result describes the current namespace topology; positional images, `--file`, and `--namespace` are mutually exclusive. Use `--kubeconfig` and `--context` when the default kubeconfig selection is not sufficient. Kubernetes TLS and registry TLS are controlled separately by `--kube-insecure` and `--insecure`.
+
 Use a strict YAML input when deployment selectors differ from repository names:
 
 ```yaml

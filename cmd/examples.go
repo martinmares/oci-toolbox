@@ -68,7 +68,18 @@ oci-toolbox bundle publish bundle.yml \
   --progress`, color)
 
 	section(w, "Reconstruct a release manifest", color)
-	codeBlock(w, `# Reconstruct directly from existing tagged images.
+	codeBlock(w, `# Reconstruct exact Deployment/container selectors from Kubernetes.
+oci-toolbox release reconstruct \
+  --namespace example \
+  --image-prefix registry.example.com/team \
+  --release-id RE_2026.07.28.01 \
+  --kube-insecure \
+  --insecure \
+  --output releases/RE_2026.07.28.01.yml \
+  --discover-tags \
+  --progress
+
+# Reconstruct directly from existing tagged images.
 oci-toolbox release reconstruct \
   registry.example.com/release/api:RE_2026.07.28.01 \
   registry.example.com/release/ui:RE_2026.07.28.01 \

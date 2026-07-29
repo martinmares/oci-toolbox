@@ -131,16 +131,7 @@ images:
 	if err != nil {
 		t.Fatal(err)
 	}
-	reconstructOptions = struct {
-		file         string
-		output       string
-		releaseID    string
-		creds        string
-		insecure     bool
-		progress     bool
-		discoverTags bool
-		extraTags    []string
-	}{
+	reconstructOptions = releaseReconstructOptions{
 		output:       reconstructOutput,
 		releaseID:    "release-1",
 		insecure:     true,
@@ -202,16 +193,7 @@ images:
 	}
 
 	multiOutput := filepath.Join(t.TempDir(), "multi.yml")
-	reconstructOptions = struct {
-		file         string
-		output       string
-		releaseID    string
-		creds        string
-		insecure     bool
-		progress     bool
-		discoverTags bool
-		extraTags    []string
-	}{
+	reconstructOptions = releaseReconstructOptions{
 		output:   multiOutput,
 		insecure: true,
 		progress: true,

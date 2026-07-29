@@ -3,6 +3,7 @@ package kubeimages
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	appsv1 "k8s.io/client-go/kubernetes/typed/apps/v1"
@@ -18,6 +19,12 @@ type Options struct {
 
 type Client struct {
 	client appsv1.AppsV1Interface
+}
+
+type DeploymentImage struct {
+	AppName       string
+	ContainerName string
+	Image         string
 }
 
 func New(opts Options) (*Client, error) {
@@ -60,5 +67,32 @@ func (c *Client) ListImages(ctx context.Context, namespace string) ([]string, er
 			}
 		}
 	}
+	return images, nil
+}
+
+func (c *Client) ListDeploymentImages(ctx context.Context, namespace string) ([]DeploymentImage, error) {
+	deployments, err := c.client.Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	images := make([]DeploymentImage, 0)
+	for _, deployment := range deployments.Items {
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			if container.Image == "" {
+				continue
+			}
+			images = append(images, DeploymentImage{
+				AppName:       deployment.Name,
+				ContainerName: container.Name,
+				Image:         container.Image,
+			})
+		}
+	}
+	sort.Slice(images, func(i, j int) bool {
+		if images[i].AppName != images[j].AppName {
+			return images[i].AppName < images[j].AppName
+		}
+		return images[i].ContainerName < images[j].ContainerName
+	})
 	return images, nil
 }

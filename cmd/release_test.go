@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/martinmares/oci-toolbox/internal/bundle"
+	"github.com/martinmares/oci-toolbox/internal/kubeimages"
 )
 
 func TestReconstructItemsFromArguments(t *testing.T) {
@@ -31,6 +32,57 @@ func TestReconstructItemsRejectsMixedInputs(t *testing.T) {
 	_, err := reconstructItems([]string{"registry.example.com/release/api:release-1"}, "images.yml")
 	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLoadReconstructItemsRejectsMixedKubernetesInputs(t *testing.T) {
+	_, err := loadReconstructItems(t.Context(), []string{"registry.example.com/release/api:1"}, releaseReconstructOptions{
+		namespace: "example",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--namespace cannot be combined") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLoadReconstructItemsRequiresNamespaceForKubernetesOptions(t *testing.T) {
+	_, err := loadReconstructItems(t.Context(), nil, releaseReconstructOptions{
+		imagePrefix: "registry.example.com/team",
+	})
+	if err == nil || !strings.Contains(err.Error(), "require --namespace") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestFilterDeploymentImagesByRepositoryPrefix(t *testing.T) {
+	images := []kubeimages.DeploymentImage{
+		{AppName: "api", ContainerName: "api", Image: "registry.example.com/team/api:1"},
+		{AppName: "worker", ContainerName: "worker", Image: "registry.example.com/team/worker@sha256:abc"},
+		{AppName: "other", ContainerName: "other", Image: "registry.example.com/team-extra/other:1"},
+		{AppName: "external", ContainerName: "external", Image: "other.example.com/team/external:1"},
+	}
+	filtered := filterDeploymentImages(images, normalizeImagePrefix("https://registry.example.com/team/"))
+	if len(filtered) != 2 || filtered[0].AppName != "api" || filtered[1].AppName != "worker" {
+		t.Fatalf("filtered = %#v", filtered)
+	}
+}
+
+func TestReconstructDeploymentItemsPreservesSelectorsAndRepeatedImages(t *testing.T) {
+	const sharedImage = "registry.example.com/team/shared:1"
+	items := reconstructDeploymentItems([]kubeimages.DeploymentImage{
+		{AppName: "api", ContainerName: "api", Image: sharedImage},
+		{AppName: "worker", ContainerName: "metrics", Image: sharedImage},
+	})
+	want := []bundle.ReconstructImage{
+		{Ref: sharedImage, ID: "api", AppName: "api", ContainerName: "api"},
+		{Ref: sharedImage, ID: "worker/metrics", AppName: "worker", ContainerName: "metrics"},
+	}
+	if len(items) != len(want) {
+		t.Fatalf("items = %#v", items)
+	}
+	for i := range want {
+		if items[i] != want[i] {
+			t.Errorf("items[%d] = %#v, want %#v", i, items[i], want[i])
+		}
 	}
 }
 

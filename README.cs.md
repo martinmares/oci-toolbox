@@ -482,6 +482,22 @@ oci-toolbox release reconstruct \
 
 Každá reference musí obsahovat explicitní tag nebo digest; implicitní `latest` je odmítnut. Pokud všechny reference používají stejný tag, stane se tento tag hodnotou `release_id`. Jinak je nutné předat `--release-id`. Jako `id`, `app_name` a `container_name` se použije název repository.
 
+Pro inicializační manifest rekonstruovaný z existujícího Kubernetes prostředí načti selektory Deploymentů přímo z API:
+
+```bash
+oci-toolbox release reconstruct \
+  --namespace example \
+  --image-prefix registry.example.com/team \
+  --release-id RE_2026.07.28.01 \
+  --kube-insecure \
+  --insecure \
+  --output releases/RE_2026.07.28.01.yml \
+  --discover-tags \
+  --progress
+```
+
+Tento režim zapíše do `app_name` název Deploymentu a do `container_name` název každého běžného containeru z jeho pod template. Stejnou image použitou pod různými selektory zachová vícekrát. Init containery nezahrnuje. Pomocí `--image-prefix` lze ještě před zahájením kontroly registry vyřadit platformní a operátorové images mimo vybranou registry nebo repository cestu. Výsledek popisuje aktuální topologii namespace; poziční images, `--file` a `--namespace` se vzájemně vylučují. Pokud nestačí výchozí kubeconfig, použij `--kubeconfig` a `--context`. Kubernetes TLS a registry TLS se řídí odděleně pomocí `--kube-insecure` a `--insecure`.
+
 Pokud se deployment selektory liší od názvů repository, použij striktní YAML vstup:
 
 ```yaml
