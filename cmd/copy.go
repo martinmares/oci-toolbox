@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -38,6 +39,7 @@ var (
 	releaseManifest  string
 	srcPrefix        string
 	destPrefix       string
+	copyOutput       string
 	continueOnError  bool
 	wrapEntrypoint   bool
 	noWrapEntrypoint bool
@@ -90,7 +92,7 @@ var copyCmd = &cobra.Command{
   oci-toolbox copy --src-creds user:pass --dest-creds user:pass docker://src/repo:tag docker://dst/repo:tag
   oci-toolbox copy --progress --recipe inject-tool.yml docker://src/repo:tag docker://dst/repo:tag
   oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure
-  oci-toolbox copy --release-manifest release.yml --src-prefix registry.example.com/team --dest-prefix mirror.example.com/team`,
+  oci-toolbox copy --release-manifest release.yml --src-prefix registry.example.com/team --dest-prefix mirror.example.com/team --output mirrored-release.yml`,
 	RunE: runCopy,
 }
 
@@ -108,6 +110,7 @@ func init() {
 	copyCmd.Flags().StringVar(&releaseManifest, "release-manifest", "", "release manifest whose digest-locked images should be copied")
 	copyCmd.Flags().StringVar(&srcPrefix, "src-prefix", "", "source image prefix to replace; defaults to release manifest registry_base")
 	copyCmd.Flags().StringVar(&destPrefix, "dest-prefix", "", "destination image prefix for release manifest copies")
+	copyCmd.Flags().StringVarP(&copyOutput, "output", "o", "", "write a release manifest for copied destination images")
 	copyCmd.Flags().BoolVar(&continueOnError, "continue-on-error", false, "continue batch processing after a copy fails")
 	copyCmd.Flags().BoolVar(&wrapEntrypoint, "wrap-entrypoint", false, "wrap SOURCE entrypoint and command for all shadow recipe steps")
 	copyCmd.Flags().BoolVar(&noWrapEntrypoint, "no-wrap-entrypoint", false, "do not wrap the original entrypoint for any shadow recipe step")
@@ -135,6 +138,9 @@ func copyArgs(_ *cobra.Command, args []string) error {
 	}
 	if releaseManifest == "" && (srcPrefix != "" || destPrefix != "") {
 		return fmt.Errorf("--src-prefix and --dest-prefix require --release-manifest")
+	}
+	if releaseManifest == "" && copyOutput != "" {
+		return fmt.Errorf("--output requires --release-manifest")
 	}
 	if batchFile != "" {
 		if len(args) != 0 {
@@ -210,11 +216,25 @@ func runCopy(cmd *cobra.Command, args []string) error {
 		if destNoReuse {
 			return fmt.Errorf("--dest-no-reuse cannot be combined with --release-manifest")
 		}
-		batch, err := loadReleaseCopyBatch(releaseManifest, srcPrefix, destPrefix)
+		if copyOutput != "" {
+			if err := ensureReleaseOutputAvailable(copyOutput); err != nil {
+				return err
+			}
+		}
+		plan, err := loadReleaseCopyPlan(releaseManifest, srcPrefix, destPrefix)
 		if err != nil {
 			return err
 		}
-		return runCopyBatch(cmd.Context(), batch)
+		if err := runCopyBatch(cmd.Context(), plan.Items); err != nil {
+			return err
+		}
+		if copyOutput != "" {
+			if err := writeReleaseManifest(cmd, copyOutput, plan.Manifest); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "release manifest written to %s\n", copyOutput)
+		}
+		return nil
 	}
 
 	if src == "" || dst == "" {
@@ -235,6 +255,11 @@ type copyBatchItem struct {
 	Destination    string   `yaml:"destination,omitempty"`
 	DestTags       []string `yaml:"dest_tags,omitempty"`
 	ExpectedDigest string   `yaml:"-"`
+}
+
+type releaseCopyPlan struct {
+	Items    []copyBatchItem
+	Manifest *bundle.ReleaseManifest
 }
 
 type copyBatchFailure struct {
@@ -304,7 +329,7 @@ func loadCopyBatch(path string) ([]copyBatchItem, error) {
 	return batch.Copy, nil
 }
 
-func loadReleaseCopyBatch(path, sourcePrefix, targetPrefix string) ([]copyBatchItem, error) {
+func loadReleaseCopyPlan(path, sourcePrefix, targetPrefix string) (*releaseCopyPlan, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading release manifest %q: %w", path, err)
@@ -355,6 +380,7 @@ func loadReleaseCopyBatch(path, sourcePrefix, targetPrefix string) ([]copyBatchI
 	}
 
 	items := make([]copyBatchItem, 0, len(manifest.Images))
+	targetImages := make([]bundle.ReleaseImage, 0, len(manifest.Images))
 	destinations := make(map[string]int, len(manifest.Images))
 	for i, releaseImage := range manifest.Images {
 		repository := normalizeCopyPrefix(releaseImage.Image)
@@ -402,8 +428,32 @@ func loadReleaseCopyBatch(path, sourcePrefix, targetPrefix string) ([]copyBatchI
 			Dest:           destination.String(),
 			ExpectedDigest: source.DigestStr(),
 		})
+		targetImages = append(targetImages, bundle.ReleaseImage{
+			ID:            releaseImage.ID,
+			AppName:       releaseImage.AppName,
+			ContainerName: releaseImage.ContainerName,
+			Source: &bundle.ReleaseSource{
+				Image:  repository,
+				Tag:    releaseImage.Tag,
+				Digest: source.DigestStr(),
+			},
+			Image:    destination.Context().Name(),
+			Tag:      releaseID,
+			Digest:   source.DigestStr(),
+			Platform: releaseImage.Platform,
+		})
 	}
-	return items, nil
+	return &releaseCopyPlan{
+		Items: items,
+		Manifest: &bundle.ReleaseManifest{
+			ReleaseID:    releaseID,
+			CreatedAt:    time.Now().UTC(),
+			Bundle:       manifest.Bundle,
+			RegistryBase: targetPrefix,
+			Platform:     manifest.Platform,
+			Images:       targetImages,
+		},
+	}, nil
 }
 
 func normalizeCopyPrefix(value string) string {

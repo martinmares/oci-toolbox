@@ -161,6 +161,7 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 | `--release-manifest path/to/release.yml` | Copy all digest-locked images from a release manifest |
 | `--src-prefix registry/path` | Source prefix replaced in release-manifest mode; defaults to `registry_base` |
 | `--dest-prefix registry/path` | Required destination prefix in release-manifest mode |
+| `--output path/to/release.yml` | Write a release manifest for copied destination images |
 | `--continue-on-error` | Continue batch processing after a copy fails |
 | `--wrap-entrypoint` | Wrap the CLI `SOURCE` image's entrypoint and command for every `shadow` step; useful with `use-base` |
 | `--no-wrap-entrypoint` | Disable entrypoint wrapping for every `shadow` step in the supplied recipes |
@@ -260,6 +261,7 @@ oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
   --src-prefix quay.example.com/nac-test \
   --dest-prefix artifactory.example.com/nac-test \
+  --output releases/2026.06.25.01-replica.yml \
   --src-insecure \
   --dest-insecure \
   --progress
@@ -270,6 +272,8 @@ Every source uses the manifest's `image@digest`. The source prefix is replaced w
 `--release-manifest`, `--batch-file`, and positional `SOURCE DESTINATION` are separate input modes. Credentials, TLS settings, progress, debug output, and `--continue-on-error` apply to every generated copy job.
 
 Every copied destination digest is verified against the release manifest. Multi-platform image indexes are copied between registries without selecting a child platform. Recipes, layer reduction, entrypoint wrapping, `--dest-no-reuse`, and `--dest-tag` are not supported in release-manifest mode because they could change or partially materialize locked content.
+
+When `--output` is supplied, the file is written atomically only after every copy and digest verification succeeds. The new manifest keeps the original deployment selectors, platforms, bundle metadata, and release ID; it points `registry_base` and each `image` to the destination and records the previous release image in each item's `source`. Existing output files are never overwritten. Without `--output`, the command only copies the images.
 
 ### inspect
 

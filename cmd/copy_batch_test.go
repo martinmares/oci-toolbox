@@ -143,11 +143,14 @@ copy:
 	}
 }
 
-func TestLoadReleaseCopyBatchUsesDigestAndReleaseID(t *testing.T) {
+func TestLoadReleaseCopyPlanUsesDigestAndBuildsDestinationManifest(t *testing.T) {
 	path := writeReleaseFile(t, `
 release_id: 2026.06.25.01
 created_at: 2026-07-29T05:38:09Z
 registry_base: registry.example.com/release
+bundle:
+  name: stable
+  revision: abc123
 images:
   - id: api
     app_name: api
@@ -157,10 +160,11 @@ images:
     digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 `)
 
-	items, err := loadReleaseCopyBatch(path, "", "mirror.example.com/archive")
+	plan, err := loadReleaseCopyPlan(path, "", "mirror.example.com/archive")
 	if err != nil {
-		t.Fatalf("loadReleaseCopyBatch: %v", err)
+		t.Fatalf("loadReleaseCopyPlan: %v", err)
 	}
+	items := plan.Items
 	if len(items) != 1 {
 		t.Fatalf("items = %d, want 1", len(items))
 	}
@@ -175,9 +179,36 @@ images:
 	if items[0].ExpectedDigest != "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
 		t.Fatalf("expected digest = %q", items[0].ExpectedDigest)
 	}
+	output := plan.Manifest
+	if output.ReleaseID != "2026.06.25.01" ||
+		output.RegistryBase != "mirror.example.com/archive" ||
+		output.CreatedAt.IsZero() {
+		t.Fatalf("output manifest metadata = %#v", output)
+	}
+	if output.Bundle == nil || output.Bundle.Name != "stable" || output.Bundle.Revision != "abc123" {
+		t.Fatalf("output bundle = %#v", output.Bundle)
+	}
+	if len(output.Images) != 1 {
+		t.Fatalf("output images = %#v", output.Images)
+	}
+	image := output.Images[0]
+	if image.Image != "mirror.example.com/archive/team/api" ||
+		image.Tag != "2026.06.25.01" ||
+		image.Digest != items[0].ExpectedDigest {
+		t.Fatalf("output image = %#v", image)
+	}
+	if image.Source == nil ||
+		image.Source.Image != "registry.example.com/release/team/api" ||
+		image.Source.Tag != "latest" ||
+		image.Source.Digest != items[0].ExpectedDigest {
+		t.Fatalf("output source = %#v", image.Source)
+	}
+	if len(image.ExtraTags) != 0 || len(output.ExtraTags) != 0 {
+		t.Fatalf("copied manifest claims aliases that were not copied: %#v", output)
+	}
 }
 
-func TestLoadReleaseCopyBatchRequiresSourcePrefixWithoutRegistryBase(t *testing.T) {
+func TestLoadReleaseCopyPlanRequiresSourcePrefixWithoutRegistryBase(t *testing.T) {
 	path := writeReleaseFile(t, `
 release_id: release-1
 images:
@@ -186,13 +217,13 @@ images:
     digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 `)
 
-	_, err := loadReleaseCopyBatch(path, "", "mirror.example.com/release")
+	_, err := loadReleaseCopyPlan(path, "", "mirror.example.com/release")
 	if err == nil || !strings.Contains(err.Error(), "--src-prefix is required") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestLoadReleaseCopyBatchRejectsImageOutsideSourcePrefix(t *testing.T) {
+func TestLoadReleaseCopyPlanRejectsImageOutsideSourcePrefix(t *testing.T) {
 	path := writeReleaseFile(t, `
 release_id: release-1
 images:
@@ -201,7 +232,7 @@ images:
     digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 `)
 
-	_, err := loadReleaseCopyBatch(
+	_, err := loadReleaseCopyPlan(
 		path,
 		"https://registry.example.com/release/",
 		"docker://mirror.example.com/release/",
@@ -211,7 +242,7 @@ images:
 	}
 }
 
-func TestLoadReleaseCopyBatchRejectsUnknownFields(t *testing.T) {
+func TestLoadReleaseCopyPlanRejectsUnknownFields(t *testing.T) {
 	path := writeReleaseFile(t, `
 release_id: release-1
 unexpected: true
@@ -221,7 +252,7 @@ images:
     digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 `)
 
-	_, err := loadReleaseCopyBatch(path, "registry.example.com/release", "mirror.example.com/release")
+	_, err := loadReleaseCopyPlan(path, "registry.example.com/release", "mirror.example.com/release")
 	if err == nil || !strings.Contains(err.Error(), "field unexpected not found") {
 		t.Fatalf("error = %v", err)
 	}

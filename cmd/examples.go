@@ -44,6 +44,7 @@ oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
   --src-prefix quay.example.com/nac-test \
   --dest-prefix artifactory.example.com/nac-test \
+  --output releases/2026.06.25.01-replica.yml \
   --src-insecure \
   --dest-insecure \
   --progress`, color)

@@ -22,6 +22,7 @@ func TestWriteExamplesPlain(t *testing.T) {
 		"Copy a release manifest",
 		"--release-manifest releases/2026.06.25.01.yml",
 		"--dest-prefix artifactory.example.com/nac-test",
+		"--output releases/2026.06.25.01-replica.yml",
 		"Publish an image bundle",
 		"oci-toolbox bundle publish bundle.yml",
 		"Reconstruct a release manifest",

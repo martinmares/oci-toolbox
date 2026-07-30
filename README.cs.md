@@ -161,6 +161,7 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 | `--release-manifest cesta/k/release.yml` | Zkopíruje všechny image uzamčené digestem z release manifestu |
 | `--src-prefix registry/cesta` | Zdrojový prefix nahrazený v release-manifest režimu; výchozí je `registry_base` |
 | `--dest-prefix registry/cesta` | Povinný cílový prefix v release-manifest režimu |
+| `--output cesta/k/release.yml` | Zapíše release manifest pro zkopírované cílové image |
 | `--continue-on-error` | V batch režimu pokračuje další položkou po selhání |
 | `--wrap-entrypoint` | Pro všechny kroky `shadow` obalí ENTRYPOINT a CMD z CLI image `SOURCE`; vhodné s `use-base` |
 | `--no-wrap-entrypoint` | Vypne entrypoint wrapper pro všechny kroky `shadow` v načtených recipe |
@@ -260,6 +261,7 @@ oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
   --src-prefix quay.example.com/nac-test \
   --dest-prefix artifactory.example.com/nac-test \
+  --output releases/2026.06.25.01-replica.yml \
   --src-insecure \
   --dest-insecure \
   --progress
@@ -270,6 +272,8 @@ Každý zdroj používá `image@digest` z manifestu. Zdrojový prefix se nahrad�
 `--release-manifest`, `--batch-file` a poziční `SOURCE DESTINATION` jsou samostatné vstupní režimy. Credentials, TLS nastavení, progress, debug výstup a `--continue-on-error` se aplikují na každý vygenerovaný copy job.
 
 Každý zkopírovaný cílový digest se ověří proti release manifestu. Multi-platform image indexy se mezi registry kopírují bez výběru jedné platformy. Recipe, redukce vrstev, entrypoint wrapping, `--dest-no-reuse` a `--dest-tag` nejsou v release-manifest režimu podporovány, protože by mohly uzamčený obsah změnit nebo materializovat jen částečně.
+
+Při použití `--output` se soubor zapíše atomicky až po úspěšném dokončení všech kopií a ověření digestů. Nový manifest zachová původní deployment selektory, platformy, bundle metadata a release ID; `registry_base` a jednotlivé `image` přesměruje na cíl a předchozí release image zaznamená do `source` každé položky. Existující výstupní soubor se nikdy nepřepíše. Bez `--output` příkaz pouze zkopíruje images.
 
 ### inspect
 
