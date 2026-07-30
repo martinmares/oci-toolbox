@@ -158,6 +158,9 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 | `--recipe cesta/k/recipe.yml` | Recipe soubor (lze opakovat) |
 | `--debug` | Zapne podrobný výstup |
 | `--batch-file cesta/k/images.yml` | Spustí více copy jobů ze YAML souboru |
+| `--release-manifest cesta/k/release.yml` | Zkopíruje všechny image uzamčené digestem z release manifestu |
+| `--src-prefix registry/cesta` | Zdrojový prefix nahrazený v release-manifest režimu; výchozí je `registry_base` |
+| `--dest-prefix registry/cesta` | Povinný cílový prefix v release-manifest režimu |
 | `--continue-on-error` | V batch režimu pokračuje další položkou po selhání |
 | `--wrap-entrypoint` | Pro všechny kroky `shadow` obalí ENTRYPOINT a CMD z CLI image `SOURCE`; vhodné s `use-base` |
 | `--no-wrap-entrypoint` | Vypne entrypoint wrapper pro všechny kroky `shadow` v načtených recipe |
@@ -247,6 +250,26 @@ oci-toolbox copy \
 Batch běží sériově. Bez `--continue-on-error` se zastaví na první chybě. S `--continue-on-error` pokračuje dalšími položkami, ale pokud aspoň jedna položka selže, příkaz na konci vrátí nenulový exit code a vypíše souhrn selhání.
 
 Primární klíče v batch souboru jsou `src` a `dest`, stejně jako CLI flagy `--src-*` a `--dest-*`. Jako aliasy jsou podporované i `source` a `destination`. `dest_tags` přidá další tagy ve stejném cílovém repository po jednom zkopírování image, stejně jako opakované `--dest-tag` u jednoho CLI příkazu. Duplicitní cílové image jsou odmítnuté při validaci souboru.
+
+### Kopírování release manifestu
+
+Pomocí `--release-manifest` lze zkopírovat neměnný release do jiné registry cesty bez předchozího generování batch souboru:
+
+```bash
+oci-toolbox copy \
+  --release-manifest releases/2026.06.25.01.yml \
+  --src-prefix quay.example.com/nac-test \
+  --dest-prefix artifactory.example.com/nac-test \
+  --src-insecure \
+  --dest-insecure \
+  --progress
+```
+
+Každý zdroj používá `image@digest` z manifestu. Zdrojový prefix se nahradí hodnotou `--dest-prefix`, zbývající repository cesta se zachová a každý cíl dostane jako tag hodnotu `release_id`. Pokud není zadán `--src-prefix`, použije se `registry_base` z manifestu; pokud není dostupné ani jedno, příkaz skončí před kopírováním. Image mimo zdrojový prefix a duplicitní cíle jsou odmítnuty. Hodnoty `tag` a `extra_tags` z manifestu se záměrně nekopírují.
+
+`--release-manifest`, `--batch-file` a poziční `SOURCE DESTINATION` jsou samostatné vstupní režimy. Credentials, TLS nastavení, progress, debug výstup a `--continue-on-error` se aplikují na každý vygenerovaný copy job.
+
+Každý zkopírovaný cílový digest se ověří proti release manifestu. Multi-platform image indexy se mezi registry kopírují bez výběru jedné platformy. Recipe, redukce vrstev, entrypoint wrapping, `--dest-no-reuse` a `--dest-tag` nejsou v release-manifest režimu podporovány, protože by mohly uzamčený obsah změnit nebo materializovat jen částečně.
 
 ### inspect
 

@@ -19,6 +19,9 @@ func TestWriteExamplesPlain(t *testing.T) {
 		"# images.yml",
 		"  - src: registry.example.com/team/config:release-1.0",
 		"    dest: registry.example.com/team/ticket:test-latest",
+		"Copy a release manifest",
+		"--release-manifest releases/2026.06.25.01.yml",
+		"--dest-prefix artifactory.example.com/nac-test",
 		"Publish an image bundle",
 		"oci-toolbox bundle publish bundle.yml",
 		"Reconstruct a release manifest",
@@ -54,6 +57,14 @@ func TestWriteExamplesColor(t *testing.T) {
 	for _, want := range []string{ansiBold + ansiCyan + "Quick copy", ansiGreen + "oci-toolbox copy", ansiYellow + "src:"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("color output does not contain %q", want)
+		}
+	}
+	for _, want := range []string{
+		ansiGreen + "  --release-id RE_2026.07.28.01 \\" + ansiReset,
+		ansiGreen + "  ./snapshots/example/20260728-120000.yml" + ansiReset,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("continued command line is not green: missing %q", want)
 		}
 	}
 }

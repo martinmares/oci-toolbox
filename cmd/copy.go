@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/martinmares/oci-toolbox/internal/auth"
+	"github.com/martinmares/oci-toolbox/internal/bundle"
 	"github.com/martinmares/oci-toolbox/internal/image"
 	"github.com/martinmares/oci-toolbox/internal/logging"
 	"github.com/martinmares/oci-toolbox/internal/progress"
@@ -34,6 +35,9 @@ var (
 	reducelayers     bool
 	reduceChanges    bool
 	batchFile        string
+	releaseManifest  string
+	srcPrefix        string
+	destPrefix       string
 	continueOnError  bool
 	wrapEntrypoint   bool
 	noWrapEntrypoint bool
@@ -56,6 +60,7 @@ type copyRunOptions struct {
 	NoWrapEntrypoint bool
 	SrcInsecure      bool
 	DestInsecure     bool
+	ExpectedDigest   string
 }
 
 func currentCopyRunOptions() copyRunOptions {
@@ -77,14 +82,15 @@ func currentCopyRunOptions() copyRunOptions {
 }
 
 var copyCmd = &cobra.Command{
-	Use:   "copy SOURCE DESTINATION | copy --batch-file FILE",
+	Use:   "copy SOURCE DESTINATION | copy --batch-file FILE | copy --release-manifest FILE --dest-prefix PREFIX",
 	Short: "Copy and patch an OCI image between registries or Docker archives",
 	Args:  copyArgs,
 	Example: `  oci-toolbox copy docker://registry.example.com/app:latest docker://registry.example.com/app:patched
   oci-toolbox copy file://app.tgz docker://registry.example.com/app:restored
   oci-toolbox copy --src-creds user:pass --dest-creds user:pass docker://src/repo:tag docker://dst/repo:tag
   oci-toolbox copy --progress --recipe inject-tool.yml docker://src/repo:tag docker://dst/repo:tag
-  oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure`,
+  oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure
+  oci-toolbox copy --release-manifest release.yml --src-prefix registry.example.com/team --dest-prefix mirror.example.com/team`,
 	RunE: runCopy,
 }
 
@@ -99,6 +105,9 @@ func init() {
 	copyCmd.Flags().BoolVar(&reducelayers, "reduce", false, "squash all layers into one before pushing (fewer layers, size may increase)")
 	copyCmd.Flags().BoolVar(&reduceChanges, "reduce-changes", false, "preserve base layers and reduce recipe changes into one delta layer")
 	copyCmd.Flags().StringVar(&batchFile, "batch-file", "", "YAML file with copy jobs to run sequentially")
+	copyCmd.Flags().StringVar(&releaseManifest, "release-manifest", "", "release manifest whose digest-locked images should be copied")
+	copyCmd.Flags().StringVar(&srcPrefix, "src-prefix", "", "source image prefix to replace; defaults to release manifest registry_base")
+	copyCmd.Flags().StringVar(&destPrefix, "dest-prefix", "", "destination image prefix for release manifest copies")
 	copyCmd.Flags().BoolVar(&continueOnError, "continue-on-error", false, "continue batch processing after a copy fails")
 	copyCmd.Flags().BoolVar(&wrapEntrypoint, "wrap-entrypoint", false, "wrap SOURCE entrypoint and command for all shadow recipe steps")
 	copyCmd.Flags().BoolVar(&noWrapEntrypoint, "no-wrap-entrypoint", false, "do not wrap the original entrypoint for any shadow recipe step")
@@ -121,12 +130,27 @@ var (
 )
 
 func copyArgs(_ *cobra.Command, args []string) error {
+	if batchFile != "" && releaseManifest != "" {
+		return fmt.Errorf("--batch-file and --release-manifest cannot be used together")
+	}
+	if releaseManifest == "" && (srcPrefix != "" || destPrefix != "") {
+		return fmt.Errorf("--src-prefix and --dest-prefix require --release-manifest")
+	}
 	if batchFile != "" {
 		if len(args) != 0 {
 			return fmt.Errorf("--batch-file cannot be combined with positional SOURCE DESTINATION")
 		}
 		if fromRef != "" || toRef != "" {
 			return fmt.Errorf("--batch-file cannot be combined with --from/--to")
+		}
+		return nil
+	}
+	if releaseManifest != "" {
+		if len(args) != 0 {
+			return fmt.Errorf("--release-manifest cannot be combined with positional SOURCE DESTINATION")
+		}
+		if fromRef != "" || toRef != "" {
+			return fmt.Errorf("--release-manifest cannot be combined with --from/--to")
 		}
 		return nil
 	}
@@ -176,6 +200,22 @@ func runCopy(cmd *cobra.Command, args []string) error {
 		}
 		return runCopyBatch(cmd.Context(), batch)
 	}
+	if releaseManifest != "" {
+		if len(destTags) > 0 {
+			return fmt.Errorf("--dest-tag cannot be combined with --release-manifest")
+		}
+		if len(recipePaths) > 0 || reducelayers || reduceChanges || wrapEntrypoint || noWrapEntrypoint {
+			return fmt.Errorf("recipes, layer reduction, and entrypoint wrapping cannot be combined with --release-manifest")
+		}
+		if destNoReuse {
+			return fmt.Errorf("--dest-no-reuse cannot be combined with --release-manifest")
+		}
+		batch, err := loadReleaseCopyBatch(releaseManifest, srcPrefix, destPrefix)
+		if err != nil {
+			return err
+		}
+		return runCopyBatch(cmd.Context(), batch)
+	}
 
 	if src == "" || dst == "" {
 		return fmt.Errorf("source and destination are required (provide as positional arguments or --from/--to)")
@@ -189,11 +229,12 @@ type copyBatch struct {
 }
 
 type copyBatchItem struct {
-	Src         string   `yaml:"src,omitempty"`
-	Source      string   `yaml:"source,omitempty"`
-	Dest        string   `yaml:"dest,omitempty"`
-	Destination string   `yaml:"destination,omitempty"`
-	DestTags    []string `yaml:"dest_tags,omitempty"`
+	Src            string   `yaml:"src,omitempty"`
+	Source         string   `yaml:"source,omitempty"`
+	Dest           string   `yaml:"dest,omitempty"`
+	Destination    string   `yaml:"destination,omitempty"`
+	DestTags       []string `yaml:"dest_tags,omitempty"`
+	ExpectedDigest string   `yaml:"-"`
 }
 
 type copyBatchFailure struct {
@@ -263,6 +304,115 @@ func loadCopyBatch(path string) ([]copyBatchItem, error) {
 	return batch.Copy, nil
 }
 
+func loadReleaseCopyBatch(path, sourcePrefix, targetPrefix string) ([]copyBatchItem, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading release manifest %q: %w", path, err)
+	}
+	defer f.Close()
+
+	decoder := yaml.NewDecoder(f)
+	decoder.KnownFields(true)
+	var manifest bundle.ReleaseManifest
+	if err := decoder.Decode(&manifest); err != nil {
+		return nil, fmt.Errorf("parsing release manifest %q: %w", path, err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("parsing release manifest %q: multiple YAML documents are not allowed", path)
+		}
+		return nil, fmt.Errorf("parsing release manifest %q: %w", path, err)
+	}
+
+	releaseID := strings.TrimSpace(manifest.ReleaseID)
+	if releaseID == "" {
+		return nil, fmt.Errorf("release manifest %q has no release_id", path)
+	}
+	if _, err := name.NewTag("example.invalid/repository:"+releaseID, name.WeakValidation); err != nil {
+		return nil, fmt.Errorf("release manifest %q has invalid release_id %q: %w", path, releaseID, err)
+	}
+	if len(manifest.Images) == 0 {
+		return nil, fmt.Errorf("release manifest %q has no images", path)
+	}
+
+	sourcePrefix = normalizeCopyPrefix(sourcePrefix)
+	if sourcePrefix == "" {
+		sourcePrefix = normalizeCopyPrefix(manifest.RegistryBase)
+	}
+	if sourcePrefix == "" {
+		return nil, fmt.Errorf("--src-prefix is required when release manifest %q has no registry_base", path)
+	}
+	targetPrefix = normalizeCopyPrefix(targetPrefix)
+	if targetPrefix == "" {
+		return nil, fmt.Errorf("--dest-prefix is required with --release-manifest")
+	}
+	if _, err := name.NewRepository(sourcePrefix+"/prefix-check", name.WeakValidation); err != nil {
+		return nil, fmt.Errorf("invalid source prefix %q: %w", sourcePrefix, err)
+	}
+	if _, err := name.NewRepository(targetPrefix+"/prefix-check", name.WeakValidation); err != nil {
+		return nil, fmt.Errorf("invalid destination prefix %q: %w", targetPrefix, err)
+	}
+
+	items := make([]copyBatchItem, 0, len(manifest.Images))
+	destinations := make(map[string]int, len(manifest.Images))
+	for i, releaseImage := range manifest.Images {
+		repository := normalizeCopyPrefix(releaseImage.Image)
+		if repository == "" {
+			return nil, fmt.Errorf("release manifest %q images[%d].image is required", path, i)
+		}
+		if !strings.HasPrefix(repository, sourcePrefix+"/") {
+			return nil, fmt.Errorf(
+				"release manifest %q images[%d].image %q is outside source prefix %q",
+				path,
+				i,
+				repository,
+				sourcePrefix,
+			)
+		}
+		relativeRepository := strings.TrimPrefix(repository, sourcePrefix+"/")
+		if relativeRepository == "" {
+			return nil, fmt.Errorf("release manifest %q images[%d].image has no repository below source prefix", path, i)
+		}
+
+		digest := strings.TrimSpace(releaseImage.Digest)
+		source, err := name.NewDigest(repository+"@"+digest, name.WeakValidation)
+		if err != nil {
+			return nil, fmt.Errorf("release manifest %q images[%d].digest is invalid: %w", path, i, err)
+		}
+		destination, err := name.NewTag(
+			targetPrefix+"/"+relativeRepository+":"+releaseID,
+			name.WeakValidation,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("release manifest %q images[%d] destination is invalid: %w", path, i, err)
+		}
+		if previous, exists := destinations[destination.String()]; exists {
+			return nil, fmt.Errorf(
+				"release manifest %q images[%d] duplicates destination from images[%d]: %s",
+				path,
+				i,
+				previous,
+				destination,
+			)
+		}
+		destinations[destination.String()] = i
+		items = append(items, copyBatchItem{
+			Src:            source.String(),
+			Dest:           destination.String(),
+			ExpectedDigest: source.DigestStr(),
+		})
+	}
+	return items, nil
+}
+
+func normalizeCopyPrefix(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	return strings.Trim(stripScheme(value), "/")
+}
+
 func runCopyBatch(ctx context.Context, batch []copyBatchItem) error {
 	opts := currentCopyRunOptions()
 	var failures []copyBatchFailure
@@ -271,7 +421,10 @@ func runCopyBatch(ctx context.Context, batch []copyBatchItem) error {
 		if !opts.Progress {
 			slog.Info("running batch copy", "job", label, "source", item.source(), "destination", item.target())
 		}
-		if err := runCopyOne(ctx, item.source(), item.target(), label, item.DestTags, opts); err != nil {
+		itemOpts := opts
+		itemOpts.ExpectedDigest = item.ExpectedDigest
+		err := runCopyOne(ctx, item.source(), item.target(), label, item.DestTags, itemOpts)
+		if err != nil {
 			failures = append(failures, copyBatchFailure{Index: i + 1, Item: item, Err: err})
 			if !continueOnError {
 				return fmt.Errorf("%s failed: %w", label, err)
@@ -406,9 +559,11 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 
 	// --- load source image ---
 	var (
-		img      v1.Image
-		srcLabel string
-		err      error
+		img         v1.Image
+		srcIndex    v1.ImageIndex
+		indexDigest string
+		srcLabel    string
+		err         error
 	)
 	if srcIsFile {
 		filePath := strings.TrimPrefix(src, "file://")
@@ -470,14 +625,97 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 		if jsonEmitter != nil {
 			jsonEmitter.Phase("pull", srcParsed.String())
 		}
-		img, err = remote.Image(srcParsed, srcOpts...)
+		desc, getErr := remote.Get(srcParsed, srcOpts...)
+		if getErr != nil {
+			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("pulling source image: " + getErr.Error())
+			}
+			return fmt.Errorf("pulling source image: %w", getErr)
+		}
+		if desc.MediaType.IsIndex() {
+			if len(opts.RecipePaths) > 0 || opts.Reduce || opts.ReduceChanges {
+				closeProg(srcCh, dstCh)
+				return fmt.Errorf("recipes and layer reduction are not supported when copying a multi-platform image index")
+			}
+			if isFileDst || dstIsDaemon {
+				closeProg(srcCh, dstCh)
+				return fmt.Errorf("multi-platform image indexes can currently be copied only between registries")
+			}
+			if opts.DestNoReuse {
+				closeProg(srcCh, dstCh)
+				return fmt.Errorf("--dest-no-reuse is not supported when copying a multi-platform image index")
+			}
+			if len(additionalDestTags) > 0 {
+				closeProg(srcCh, dstCh)
+				return fmt.Errorf("--dest-tag is not supported when copying a multi-platform image index")
+			}
+			srcIndex, err = desc.ImageIndex()
+			indexDigest = desc.Digest.String()
+		} else {
+			img, err = desc.Image()
+		}
 		if err != nil {
 			closeProg(srcCh, dstCh)
 			if jsonEmitter != nil {
-				jsonEmitter.Error("pulling source image: " + err.Error())
+				jsonEmitter.Error("reading source manifest: " + err.Error())
 			}
-			return fmt.Errorf("pulling source image: %w", err)
+			return fmt.Errorf("reading source manifest: %w", err)
 		}
+	}
+
+	if srcIndex != nil {
+		dstParsed, err := name.ParseReference(stripScheme(dst))
+		if err != nil {
+			closeProg(srcCh, dstCh)
+			return fmt.Errorf("invalid destination reference: %w", err)
+		}
+		writeOpts := dstOpts
+		if dstCh != nil {
+			writeOpts = append(writeOpts, remote.WithProgress(dstCh))
+		}
+		setPhase("pushing destination image index")
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("push", dstParsed.String())
+		}
+		if err := remote.WriteIndex(dstParsed, srcIndex, writeOpts...); err != nil {
+			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("pushing image index: " + err.Error())
+			}
+			return fmt.Errorf("pushing image index: %w", err)
+		}
+		pushed, err := remote.Get(dstParsed, dstOpts...)
+		if err != nil {
+			closeProg(srcCh, dstCh)
+			return fmt.Errorf("verifying destination image index: %w", err)
+		}
+		expectedDigest := indexDigest
+		if opts.ExpectedDigest != "" {
+			expectedDigest = opts.ExpectedDigest
+		}
+		if pushed.Digest.String() != expectedDigest {
+			closeProg(srcCh, dstCh)
+			return fmt.Errorf(
+				"destination image index digest %s differs from source digest %s",
+				pushed.Digest,
+				expectedDigest,
+			)
+		}
+		if srcCh != nil {
+			safeClose(srcCh)
+			srcCh = nil
+		}
+		if ui != nil {
+			ui.Wait()
+			printTimings()
+		} else {
+			slog.Info("copied image index", "source", srcLabel, "destination", dstParsed.String())
+		}
+		if jsonEmitter != nil {
+			jsonEmitter.Done("success", "copied image index")
+		}
+		return nil
 	}
 
 	// go-containerregistry pull is lazy — remote.WithProgress only fires during push (write.go).
@@ -731,6 +969,27 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 		}
 		if err := tagAdditionalDestTags(dstParsed, img, dstOpts, additionalDestTags, setPhase, jsonEmitter); err != nil {
 			return err
+		}
+	}
+	if opts.ExpectedDigest != "" {
+		pushed, err := remote.Get(dstParsed, dstOpts...)
+		if err != nil {
+			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("verifying destination image: " + err.Error())
+			}
+			return fmt.Errorf("verifying destination image: %w", err)
+		}
+		if pushed.Digest.String() != opts.ExpectedDigest {
+			closeProg(srcCh, dstCh)
+			if jsonEmitter != nil {
+				jsonEmitter.Error("destination image digest differs from release manifest")
+			}
+			return fmt.Errorf(
+				"destination image digest %s differs from release manifest digest %s",
+				pushed.Digest,
+				opts.ExpectedDigest,
+			)
 		}
 	}
 

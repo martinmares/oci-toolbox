@@ -213,6 +213,32 @@ images:
 	if !bytes.Contains(progressOutput.Bytes(), []byte("100%")) {
 		t.Fatalf("progress output = %q", progressOutput.String())
 	}
+
+	indexCopyRef, err := name.NewTag(serverURL.Host+"/release/multi-copy:release-1", name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCopyOne(
+		cmd.Context(),
+		indexRef.String(),
+		indexCopyRef.String(),
+		"",
+		nil,
+		copyRunOptions{
+			SrcInsecure:    true,
+			DestInsecure:   true,
+			ExpectedDigest: indexDigest.String(),
+		},
+	); err != nil {
+		t.Fatalf("copy image index: %v", err)
+	}
+	copiedIndex, err := remote.Get(indexCopyRef)
+	if err != nil {
+		t.Fatalf("inspect copied image index: %v", err)
+	}
+	if !copiedIndex.MediaType.IsIndex() || copiedIndex.Digest.String() != indexDigest.String() {
+		t.Fatalf("copied index descriptor = %#v, want digest %s", copiedIndex.Descriptor, indexDigest)
+	}
 }
 
 func assertPublishedRelease(t *testing.T, path, digest string) {

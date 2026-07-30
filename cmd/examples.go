@@ -38,6 +38,16 @@ copy:
   - src: registry.example.com/team/ticket:release-1.0
     dest: registry.example.com/team/ticket:test-latest`, color)
 
+	section(w, "Copy a release manifest", color)
+	codeBlock(w, `# Copy every digest-locked image in a release to another registry path.
+oci-toolbox copy \
+  --release-manifest releases/2026.06.25.01.yml \
+  --src-prefix quay.example.com/nac-test \
+  --dest-prefix artifactory.example.com/nac-test \
+  --src-insecure \
+  --dest-insecure \
+  --progress`, color)
+
 	section(w, "Publish an image bundle", color)
 	codeBlock(w, `# bundle.yml: mutable desired state kept in Git.
 name: stable
@@ -269,8 +279,16 @@ func section(w io.Writer, title string, color bool) {
 }
 
 func codeBlock(w io.Writer, block string, color bool) {
+	commandContinuation := false
 	for _, line := range strings.Split(block, "\n") {
-		fmt.Fprintln(w, highlightExampleLine(line, color))
+		if color && commandContinuation && line != "" {
+			fmt.Fprintln(w, ansiGreen+line+ansiReset)
+		} else {
+			fmt.Fprintln(w, highlightExampleLine(line, color))
+		}
+		trimmed := strings.TrimSpace(line)
+		commandContinuation = (commandContinuation || strings.HasPrefix(trimmed, "oci-toolbox ")) &&
+			strings.HasSuffix(trimmed, `\`)
 	}
 }
 

@@ -158,6 +158,9 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 | `--recipe path/to/recipe.yml` | Recipe file to apply (repeatable) |
 | `--debug` | Enable verbose output |
 | `--batch-file path/to/images.yml` | Run multiple copy jobs from a YAML file |
+| `--release-manifest path/to/release.yml` | Copy all digest-locked images from a release manifest |
+| `--src-prefix registry/path` | Source prefix replaced in release-manifest mode; defaults to `registry_base` |
+| `--dest-prefix registry/path` | Required destination prefix in release-manifest mode |
 | `--continue-on-error` | Continue batch processing after a copy fails |
 | `--wrap-entrypoint` | Wrap the CLI `SOURCE` image's entrypoint and command for every `shadow` step; useful with `use-base` |
 | `--no-wrap-entrypoint` | Disable entrypoint wrapping for every `shadow` step in the supplied recipes |
@@ -247,6 +250,26 @@ oci-toolbox copy \
 Batch jobs run sequentially. Without `--continue-on-error`, the first failed copy stops the batch. With `--continue-on-error`, later entries still run, but the command returns a non-zero exit code at the end if any entry failed and prints a failure summary.
 
 The primary batch keys are `src` and `dest`, matching the `--src-*` and `--dest-*` CLI flags. `source` and `destination` are also accepted as aliases. `dest_tags` adds extra tags in the same destination repository after the image is copied once, equivalent to repeating `--dest-tag` for a single copy command. Duplicate destination images are rejected during validation.
+
+### Release Manifest Copy
+
+Use `--release-manifest` to copy an immutable release to another registry path without first generating a batch file:
+
+```bash
+oci-toolbox copy \
+  --release-manifest releases/2026.06.25.01.yml \
+  --src-prefix quay.example.com/nac-test \
+  --dest-prefix artifactory.example.com/nac-test \
+  --src-insecure \
+  --dest-insecure \
+  --progress
+```
+
+Every source uses the manifest's `image@digest`. The source prefix is replaced with `--dest-prefix`, preserving the remaining repository path, and every destination receives the manifest's `release_id` as its tag. When `--src-prefix` is omitted, `registry_base` from the manifest is used; if neither is available, the command fails before copying. Images outside the source prefix and duplicate destinations are rejected. Manifest `tag` and `extra_tags` values are intentionally not copied.
+
+`--release-manifest`, `--batch-file`, and positional `SOURCE DESTINATION` are separate input modes. Credentials, TLS settings, progress, debug output, and `--continue-on-error` apply to every generated copy job.
+
+Every copied destination digest is verified against the release manifest. Multi-platform image indexes are copied between registries without selecting a child platform. Recipes, layer reduction, entrypoint wrapping, `--dest-no-reuse`, and `--dest-tag` are not supported in release-manifest mode because they could change or partially materialize locked content.
 
 ### inspect
 

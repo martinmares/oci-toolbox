@@ -143,10 +143,104 @@ copy:
 	}
 }
 
+func TestLoadReleaseCopyBatchUsesDigestAndReleaseID(t *testing.T) {
+	path := writeReleaseFile(t, `
+release_id: 2026.06.25.01
+created_at: 2026-07-29T05:38:09Z
+registry_base: registry.example.com/release
+images:
+  - id: api
+    app_name: api
+    container_name: api
+    image: registry.example.com/release/team/api
+    tag: latest
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+`)
+
+	items, err := loadReleaseCopyBatch(path, "", "mirror.example.com/archive")
+	if err != nil {
+		t.Fatalf("loadReleaseCopyBatch: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+	wantSource := "registry.example.com/release/team/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if items[0].source() != wantSource {
+		t.Fatalf("source = %q, want %q", items[0].source(), wantSource)
+	}
+	wantDestination := "mirror.example.com/archive/team/api:2026.06.25.01"
+	if items[0].target() != wantDestination {
+		t.Fatalf("destination = %q, want %q", items[0].target(), wantDestination)
+	}
+	if items[0].ExpectedDigest != "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+		t.Fatalf("expected digest = %q", items[0].ExpectedDigest)
+	}
+}
+
+func TestLoadReleaseCopyBatchRequiresSourcePrefixWithoutRegistryBase(t *testing.T) {
+	path := writeReleaseFile(t, `
+release_id: release-1
+images:
+  - app_name: api
+    image: registry.example.com/release/api
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+`)
+
+	_, err := loadReleaseCopyBatch(path, "", "mirror.example.com/release")
+	if err == nil || !strings.Contains(err.Error(), "--src-prefix is required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLoadReleaseCopyBatchRejectsImageOutsideSourcePrefix(t *testing.T) {
+	path := writeReleaseFile(t, `
+release_id: release-1
+images:
+  - app_name: api
+    image: other.example.com/release/api
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+`)
+
+	_, err := loadReleaseCopyBatch(
+		path,
+		"https://registry.example.com/release/",
+		"docker://mirror.example.com/release/",
+	)
+	if err == nil || !strings.Contains(err.Error(), "outside source prefix") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLoadReleaseCopyBatchRejectsUnknownFields(t *testing.T) {
+	path := writeReleaseFile(t, `
+release_id: release-1
+unexpected: true
+images:
+  - app_name: api
+    image: registry.example.com/release/api
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+`)
+
+	_, err := loadReleaseCopyBatch(path, "registry.example.com/release", "mirror.example.com/release")
+	if err == nil || !strings.Contains(err.Error(), "field unexpected not found") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestSafeCloseToleratesClosedChannel(t *testing.T) {
 	ch := make(chan v1.Update)
 	close(ch)
 	safeClose(ch)
+}
+
+func writeReleaseFile(t *testing.T, data string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "release.yml")
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(data)+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
 }
 
 func writeBatchFile(t *testing.T, data string) string {
