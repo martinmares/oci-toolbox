@@ -162,6 +162,9 @@ Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recip
 | `--src-prefix registry/cesta` | Zdrojový prefix nahrazený v release-manifest režimu; výchozí je `registry_base` |
 | `--dest-prefix registry/cesta` | Povinný cílový prefix v release-manifest režimu |
 | `--output cesta/k/release.yml` | Zapíše release manifest pro zkopírované cílové image |
+| `--retries počet` | Dodatečné pokusy při přechodných síťových chybách; výchozí `4`, hodnota `0` retry vypne |
+| `--retry-initial-delay doba` | Prodleva před prvním retry; výchozí `2s` |
+| `--retry-max-delay doba` | Maximální exponenciální prodleva; výchozí `30s` |
 | `--continue-on-error` | V batch režimu pokračuje další položkou po selhání |
 | `--wrap-entrypoint` | Pro všechny kroky `shadow` obalí ENTRYPOINT a CMD z CLI image `SOURCE`; vhodné s `use-base` |
 | `--no-wrap-entrypoint` | Vypne entrypoint wrapper pro všechny kroky `shadow` v načtených recipe |
@@ -245,6 +248,9 @@ oci-toolbox copy \
   --batch-file images.yml \
   --src-insecure \
   --dest-insecure \
+  --retries 5 \
+  --retry-initial-delay 2s \
+  --retry-max-delay 30s \
   --progress
 ```
 
@@ -264,6 +270,9 @@ oci-toolbox copy \
   --output releases/2026.06.25.01-replica.yml \
   --src-insecure \
   --dest-insecure \
+  --retries 5 \
+  --retry-initial-delay 2s \
+  --retry-max-delay 30s \
   --progress
 ```
 
@@ -274,6 +283,8 @@ Každý zdroj používá `image@digest` z manifestu. Zdrojový prefix se nahrad�
 Každý zkopírovaný cílový digest se ověří proti release manifestu. Multi-platform image indexy se mezi registry kopírují bez výběru jedné platformy. Recipe, redukce vrstev, entrypoint wrapping, `--dest-no-reuse` a `--dest-tag` nejsou v release-manifest režimu podporovány, protože by mohly uzamčený obsah změnit nebo materializovat jen částečně.
 
 Při použití `--output` se soubor zapíše atomicky až po úspěšném dokončení všech kopií a ověření digestů. Nový manifest zachová původní deployment selektory, platformy, bundle metadata a release ID; `registry_base` a jednotlivé `image` přesměruje na cíl a předchozí release image zaznamená do `source` každé položky. Existující výstupní soubor se nikdy nepřepíše. Bez `--output` příkaz pouze zkopíruje images.
+
+Přechodné síťové chyby jako timeout, reset spojení, broken pipe, dočasná chyba registry nebo unexpected EOF zopakují aktuální image s exponenciálním backoffem. Výchozí čtyři retry čekají `2s`, `4s`, `8s` a `16s`. Dokončené batch položky se neopakují a autentizační, validační, digestové ani jiné trvalé chyby se neopakují vůbec. `--continue-on-error` se uplatní až poté, co položka vyčerpá všechny retry pokusy.
 
 ### inspect
 

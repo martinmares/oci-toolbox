@@ -162,6 +162,9 @@ Copies an image from SOURCE to DESTINATION, applying any specified recipes in or
 | `--src-prefix registry/path` | Source prefix replaced in release-manifest mode; defaults to `registry_base` |
 | `--dest-prefix registry/path` | Required destination prefix in release-manifest mode |
 | `--output path/to/release.yml` | Write a release manifest for copied destination images |
+| `--retries count` | Additional attempts for transient network failures; default `4`, use `0` to disable |
+| `--retry-initial-delay duration` | Delay before the first retry; default `2s` |
+| `--retry-max-delay duration` | Maximum exponential retry delay; default `30s` |
 | `--continue-on-error` | Continue batch processing after a copy fails |
 | `--wrap-entrypoint` | Wrap the CLI `SOURCE` image's entrypoint and command for every `shadow` step; useful with `use-base` |
 | `--no-wrap-entrypoint` | Disable entrypoint wrapping for every `shadow` step in the supplied recipes |
@@ -245,6 +248,9 @@ oci-toolbox copy \
   --batch-file images.yml \
   --src-insecure \
   --dest-insecure \
+  --retries 5 \
+  --retry-initial-delay 2s \
+  --retry-max-delay 30s \
   --progress
 ```
 
@@ -264,6 +270,9 @@ oci-toolbox copy \
   --output releases/2026.06.25.01-replica.yml \
   --src-insecure \
   --dest-insecure \
+  --retries 5 \
+  --retry-initial-delay 2s \
+  --retry-max-delay 30s \
   --progress
 ```
 
@@ -274,6 +283,8 @@ Every source uses the manifest's `image@digest`. The source prefix is replaced w
 Every copied destination digest is verified against the release manifest. Multi-platform image indexes are copied between registries without selecting a child platform. Recipes, layer reduction, entrypoint wrapping, `--dest-no-reuse`, and `--dest-tag` are not supported in release-manifest mode because they could change or partially materialize locked content.
 
 When `--output` is supplied, the file is written atomically only after every copy and digest verification succeeds. The new manifest keeps the original deployment selectors, platforms, bundle metadata, and release ID; it points `registry_base` and each `image` to the destination and records the previous release image in each item's `source`. Existing output files are never overwritten. Without `--output`, the command only copies the images.
+
+Transient network failures such as timeouts, connection resets, broken pipes, temporary registry responses, and unexpected EOFs retry the current image with exponential backoff. The default four retries wait `2s`, `4s`, `8s`, and `16s`. Completed batch items are not repeated, and authentication, validation, digest, and other permanent errors fail immediately. `--continue-on-error` is applied only after an item exhausts its retries.
 
 ### inspect
 

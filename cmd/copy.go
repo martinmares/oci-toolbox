@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -46,6 +49,9 @@ var (
 	srcInsecure      bool
 	destInsecure     bool
 	destTags         []string
+	retryCount       int
+	retryInitial     time.Duration
+	retryMax         time.Duration
 )
 
 type copyRunOptions struct {
@@ -63,6 +69,20 @@ type copyRunOptions struct {
 	SrcInsecure      bool
 	DestInsecure     bool
 	ExpectedDigest   string
+}
+
+type copyRetryPolicy struct {
+	Retries      int
+	InitialDelay time.Duration
+	MaxDelay     time.Duration
+}
+
+func currentCopyRetryPolicy() copyRetryPolicy {
+	return copyRetryPolicy{
+		Retries:      retryCount,
+		InitialDelay: retryInitial,
+		MaxDelay:     retryMax,
+	}
 }
 
 func currentCopyRunOptions() copyRunOptions {
@@ -117,6 +137,9 @@ func init() {
 	copyCmd.Flags().BoolVar(&srcInsecure, "src-insecure", false, "skip TLS certificate verification for source registry")
 	copyCmd.Flags().BoolVar(&destInsecure, "dest-insecure", false, "skip TLS certificate verification for destination registry")
 	copyCmd.Flags().StringArrayVar(&destTags, "dest-tag", nil, "additional destination tag in the same repository (may be specified multiple times)")
+	copyCmd.Flags().IntVar(&retryCount, "retries", 4, "additional attempts for transient network failures; 0 disables retries")
+	copyCmd.Flags().DurationVar(&retryInitial, "retry-initial-delay", 2*time.Second, "delay before the first retry")
+	copyCmd.Flags().DurationVar(&retryMax, "retry-max-delay", 30*time.Second, "maximum delay between retries")
 
 	// Legacy --from/--to flags (hidden, for oci-toolbox native style)
 	copyCmd.Flags().StringVar(&fromRef, "from", "", "source image reference")
@@ -186,6 +209,9 @@ func runCopy(cmd *cobra.Command, args []string) error {
 	if reducelayers && reduceChanges {
 		return fmt.Errorf("--reduce and --reduce-changes cannot be used together")
 	}
+	if err := validateCopyRetryPolicy(currentCopyRetryPolicy()); err != nil {
+		return err
+	}
 	if err := validateShadowEntrypointFlags(wrapEntrypoint, noWrapEntrypoint); err != nil {
 		return err
 	}
@@ -241,7 +267,15 @@ func runCopy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("source and destination are required (provide as positional arguments or --from/--to)")
 	}
 
-	return runCopyOne(cmd.Context(), src, dst, "", destTags, currentCopyRunOptions())
+	return runCopyWithRetry(
+		cmd.Context(),
+		src,
+		dst,
+		"",
+		destTags,
+		currentCopyRunOptions(),
+		currentCopyRetryPolicy(),
+	)
 }
 
 type copyBatch struct {
@@ -473,7 +507,15 @@ func runCopyBatch(ctx context.Context, batch []copyBatchItem) error {
 		}
 		itemOpts := opts
 		itemOpts.ExpectedDigest = item.ExpectedDigest
-		err := runCopyOne(ctx, item.source(), item.target(), label, item.DestTags, itemOpts)
+		err := runCopyWithRetry(
+			ctx,
+			item.source(),
+			item.target(),
+			label,
+			item.DestTags,
+			itemOpts,
+			currentCopyRetryPolicy(),
+		)
 		if err != nil {
 			failures = append(failures, copyBatchFailure{Index: i + 1, Item: item, Err: err})
 			if !continueOnError {
@@ -488,6 +530,139 @@ func runCopyBatch(ctx context.Context, batch []copyBatchItem) error {
 		return copyBatchError{Failures: failures}
 	}
 	return nil
+}
+
+func runCopyWithRetry(
+	ctx context.Context,
+	src string,
+	dst string,
+	batchLabel string,
+	additionalDestTags []string,
+	opts copyRunOptions,
+	policy copyRetryPolicy,
+) error {
+	label := batchLabel
+	if label == "" {
+		label = shortRef(src)
+	}
+	return runWithCopyRetry(ctx, label, policy, func() error {
+		return runCopyOne(ctx, src, dst, batchLabel, additionalDestTags, opts)
+	})
+}
+
+func runWithCopyRetry(
+	ctx context.Context,
+	label string,
+	policy copyRetryPolicy,
+	operation func() error,
+) error {
+	for attempt := 0; ; attempt++ {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if attempt >= policy.Retries || !isRetryableCopyError(err) {
+			return err
+		}
+
+		retryNumber := attempt + 1
+		delay := retryDelay(policy, retryNumber)
+		fmt.Fprintf(
+			os.Stderr,
+			"retry: %s: transient error: %v; retry %d/%d in %s\n",
+			label,
+			err,
+			retryNumber,
+			policy.Retries,
+			delay,
+		)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func validateCopyRetryPolicy(policy copyRetryPolicy) error {
+	if policy.Retries < 0 {
+		return fmt.Errorf("--retries must be zero or greater")
+	}
+	if policy.InitialDelay <= 0 {
+		return fmt.Errorf("--retry-initial-delay must be greater than zero")
+	}
+	if policy.MaxDelay <= 0 {
+		return fmt.Errorf("--retry-max-delay must be greater than zero")
+	}
+	if policy.MaxDelay < policy.InitialDelay {
+		return fmt.Errorf("--retry-max-delay must be greater than or equal to --retry-initial-delay")
+	}
+	return nil
+}
+
+func retryDelay(policy copyRetryPolicy, retryNumber int) time.Duration {
+	delay := policy.InitialDelay
+	for i := 1; i < retryNumber && delay < policy.MaxDelay; i++ {
+		if delay > policy.MaxDelay/2 {
+			return policy.MaxDelay
+		}
+		delay *= 2
+	}
+	if delay > policy.MaxDelay {
+		return policy.MaxDelay
+	}
+	return delay
+}
+
+func isRetryableCopyError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ETIMEDOUT) ||
+		errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+
+	var networkError net.Error
+	if errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary()) {
+		return true
+	}
+	var temporary interface{ Temporary() bool }
+	if errors.As(err, &temporary) && temporary.Temporary() {
+		return true
+	}
+
+	message := strings.ToLower(err.Error())
+	for _, fragment := range []string{
+		"unexpected eof",
+		"operation timed out",
+		"connection reset",
+		"connection refused",
+		"broken pipe",
+		"tls handshake timeout",
+		"server closed idle connection",
+		"temporary failure",
+	} {
+		if strings.Contains(message, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func (i copyBatchItem) source() string {
@@ -606,6 +781,12 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 			srcOpts = append(srcOpts, remote.WithProgress(srcCh))
 		}
 	}
+	defer func() {
+		closeProg(srcCh, dstCh)
+		if ui != nil {
+			ui.Wait()
+		}
+	}()
 
 	// --- load source image ---
 	var (

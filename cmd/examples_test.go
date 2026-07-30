@@ -23,6 +23,7 @@ func TestWriteExamplesPlain(t *testing.T) {
 		"--release-manifest releases/2026.06.25.01.yml",
 		"--dest-prefix artifactory.example.com/nac-test",
 		"--output releases/2026.06.25.01-replica.yml",
+		"--retry-max-delay 30s",
 		"Publish an image bundle",
 		"oci-toolbox bundle publish bundle.yml",
 		"Reconstruct a release manifest",

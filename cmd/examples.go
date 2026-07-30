@@ -47,6 +47,9 @@ oci-toolbox copy \
   --output releases/2026.06.25.01-replica.yml \
   --src-insecure \
   --dest-insecure \
+  --retries 5 \
+  --retry-initial-delay 2s \
+  --retry-max-delay 30s \
   --progress`, color)
 
 	section(w, "Publish an image bundle", color)
