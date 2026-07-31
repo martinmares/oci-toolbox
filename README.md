@@ -435,6 +435,66 @@ Prints a tree view of the subtree rooted at the given path. Missing paths are si
 oci-toolbox tree --src-insecure docker://registry.example.com/app:latest /app
 ```
 
+### spring-config
+
+```
+oci-toolbox spring-config discover [flags] IMAGE
+```
+
+Analyzes a JIB-built Spring Boot image without running it. The command reads the JIB classpath and main-class files, preserves classpath order, scans classpath directories and JAR/ZIP archives, and exports Spring configuration candidates together with a deterministic `manifest.yml`.
+
+By default it extracts:
+
+- `application.yml`, `application.yaml`, `application.properties`, and profile-named variants from any classpath location;
+- `bootstrap.yml`, `bootstrap.yaml`, `bootstrap.properties`, and profile-named variants;
+- root-level `.yml`, `.yaml`, and `.properties` files from every classpath directory or archive, including custom defaults such as `database-copy-defaults.yml`;
+- additional paths selected by repeated `--include` globs.
+
+```bash
+oci-toolbox spring-config discover \
+  docker://registry.example.com/team/application:2.4 \
+  --output ./spring-config-analysis \
+  --include 'config/*.yml' \
+  --progress \
+  --src-insecure
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--output`, `-o` | Required new output directory; existing directories are never overwritten |
+| `--classpath-file /app/jib-classpath-file` | JIB classpath file inside the image |
+| `--main-class-file /app/jib-main-class-file` | JIB main-class file inside the image |
+| `--include glob` | Additional archive path or basename glob to extract; may be repeated |
+| `--progress` | Print progress while scanning image layers and classpath archives |
+| `--creds user:pass` | Registry credentials |
+| `--override-os linux` | Select an OS from a multi-platform index |
+| `--override-arch amd64` | Select an architecture from a multi-platform index |
+| `--override-variant v8` | Select a platform variant |
+| `--insecure` / `--src-insecure` | Skip source registry TLS certificate verification |
+| `--debug` | Enable verbose output |
+
+The output groups files by classpath index, so equal filenames from different JARs do not collide:
+
+```text
+spring-config-analysis/
+├── manifest.yml
+├── manifest.svg
+├── classpath.txt
+└── sources/
+    ├── 0000-resources/application.yml
+    └── 0047-application-commons.jar/application-commons.yml
+```
+
+The manifest records the image digest and platform, main class, ordered classpath, original image or `jar!/entry` source, output path, SHA-256, and size. A name such as `application-commons.yml` receives `profile_hint: commons`, but `activation` remains `unknown`: the file may be loaded by a profile, `spring.config.import`, `@PropertySource`, or custom code.
+
+`manifest.svg` is a searchable visual map from the image through classpath entries to configuration IDs, sources, and output files. It shows only classpath entries with discovered configurations and reports how many empty entries were omitted. A JAR source is marked as `JAR`, uses a `source` path containing `!/`, and has `archive_entry` in `manifest.yml`; direct image files are grouped under a classpath `directory` such as `/app/resources`.
+
+This command performs static discovery only. It does not merge files or reconstruct the final Spring Environment. Runtime analysis still needs deployment environment variables and JVM arguments, ConfigMaps and Secrets, Spring Cloud Config sources, active profiles, and preferably Actuator `/actuator/env` and `/actuator/configprops` snapshots.
+
+The output may contain credentials. Output directories use mode `0700` and extracted files use mode `0600`.
+
 ### examples command
 
 ```

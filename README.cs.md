@@ -435,6 +435,66 @@ Vypíše strom pod zadanou cestou. Chybějící cesta je defaultně tichá a war
 oci-toolbox tree --src-insecure docker://registry.example.com/app:latest /app
 ```
 
+### spring-config
+
+```
+oci-toolbox spring-config discover [flagy] IMAGE
+```
+
+Analyzuje Spring Boot image vytvořený pomocí JIB bez jeho spuštění. Příkaz přečte JIB classpath a main-class soubory, zachová pořadí classpath, projde classpath adresáře i JAR/ZIP archivy a exportuje kandidáty Spring konfigurace spolu s deterministickým `manifest.yml`.
+
+Ve výchozím stavu extrahuje:
+
+- `application.yml`, `application.yaml`, `application.properties` a profilově pojmenované varianty z libovolného místa classpath;
+- `bootstrap.yml`, `bootstrap.yaml`, `bootstrap.properties` a profilově pojmenované varianty;
+- kořenové `.yml`, `.yaml` a `.properties` soubory z každého classpath adresáře nebo archivu, včetně vlastních defaultů jako `database-copy-defaults.yml`;
+- další cesty vybrané opakovaným globem `--include`.
+
+```bash
+oci-toolbox spring-config discover \
+  docker://registry.example.com/team/application:2.4 \
+  --output ./spring-config-analysis \
+  --include 'config/*.yml' \
+  --progress \
+  --src-insecure
+```
+
+**Flagy:**
+
+| Flag | Popis |
+|------|-------|
+| `--output`, `-o` | Povinný nový výstupní adresář; existující adresář se nikdy nepřepíše |
+| `--classpath-file /app/jib-classpath-file` | JIB classpath soubor uvnitř image |
+| `--main-class-file /app/jib-main-class-file` | JIB main-class soubor uvnitř image |
+| `--include glob` | Další glob pro cestu v archivu nebo basename; lze opakovat |
+| `--progress` | Průběžný výpis při čtení vrstev image a classpath archivů |
+| `--creds user:pass` | Credentials pro registry |
+| `--override-os linux` | Výběr OS z multi-platform indexu |
+| `--override-arch amd64` | Výběr architektury z multi-platform indexu |
+| `--override-variant v8` | Výběr varianty platformy |
+| `--insecure` / `--src-insecure` | Přeskočení TLS ověření zdrojového registry |
+| `--debug` | Zapnutí podrobného výstupu |
+
+Výstup seskupuje soubory podle indexu classpath, takže se stejné názvy z různých JARů nepřepíšou:
+
+```text
+spring-config-analysis/
+├── manifest.yml
+├── manifest.svg
+├── classpath.txt
+└── sources/
+    ├── 0000-resources/application.yml
+    └── 0047-application-commons.jar/application-commons.yml
+```
+
+Manifest obsahuje digest a platformu image, main class, seřazenou classpath, původní image nebo `jar!/entry` zdroj, výstupní cestu, SHA-256 a velikost. Název jako `application-commons.yml` dostane `profile_hint: commons`, ale `activation` zůstane `unknown`: soubor může být načten profilem, přes `spring.config.import`, anotaci `@PropertySource` nebo vlastním kódem.
+
+`manifest.svg` je prohledávatelná vizuální mapa od image přes položky classpath ke konfiguračním ID, zdrojům a výstupním souborům. Zobrazuje pouze položky classpath s nalezenými konfiguracemi a uvádí počet vynechaných prázdných položek. Zdroj z JARu je označen `JAR`, v poli `source` obsahuje `!/` a v `manifest.yml` má `archive_entry`; přímé soubory image jsou seskupené pod classpath `directory`, například `/app/resources`.
+
+Příkaz provádí pouze statickou inventuru. Soubory neslučuje a nerekonstruuje výsledný Spring Environment. Runtime analýza stále potřebuje environment variables a JVM argumenty deploymentu, ConfigMaps a Secrets, Spring Cloud Config zdroje, aktivní profily a ideálně snapshoty Actuator `/actuator/env` a `/actuator/configprops`.
+
+Výstup může obsahovat credentials. Výstupní adresář používá práva `0700` a extrahované soubory `0600`.
+
 ### Příkaz examples
 
 ```

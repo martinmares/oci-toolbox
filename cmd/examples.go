@@ -148,6 +148,19 @@ oci-toolbox snapshot create --namespace example '*/team/docs-*:*'
 oci-toolbox snapshot restore --namespace example \
   ./snapshots/example/20260728-120000.yml`, color)
 
+	section(w, "Discover Spring Boot configuration", color)
+	codeBlock(w, `# Extract Spring configuration candidates from JIB classpath directories and JARs.
+# Files are kept separate; manifest.yml records their origin and manifest.svg visualizes it.
+oci-toolbox spring-config discover \
+  docker://registry.example.com/team/application:2.4 \
+  --output ./spring-config-analysis \
+  --include 'config/*.yml' \
+  --progress \
+  --src-insecure
+
+# The result is a static inventory. Combine it later with deployment inputs,
+# Spring Cloud Config sources, and Actuator env/configprops snapshots.`, color)
+
 	section(w, "Java application", color)
 	codeBlock(w, `# app.yml: add an application, make /app writable for the runtime user, and set startup metadata.
 name: java-application
