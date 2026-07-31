@@ -1,0 +1,14 @@
+.git
+.tmp
+dist
+
+.claude
+.codex
+.idea
+.vscode
+
+README.local.md
+
+*.log
+*.out
+coverage*
