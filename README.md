@@ -667,7 +667,7 @@ Cleanup works with unique manifest digests rather than counting aliases as separ
 
 ### Kubernetes image snapshots
 
-`snapshot create` reads container and init-container image references from every Deployment in a Kubernetes namespace and saves Docker archives plus an incremental YAML manifest. Transfers run directly through the built-in copy engine; no Docker daemon or second `oci-toolbox` process is required.
+`snapshot create` reads container and init-container image references from every Deployment in a Kubernetes namespace and saves compressed OCI image-layout archives plus an incremental YAML manifest. OCI archives preserve both single-platform images and complete multi-platform image indexes. Transfers run directly through the built-in copy engine; no Docker daemon or second `oci-toolbox` process is required.
 
 ```bash
 # Use current-context from kubeconfig.
@@ -688,7 +688,7 @@ oci-toolbox snapshot restore \
   ./snapshots/example/20260728-120000.yml
 ```
 
-The manifest remains `complete: false` until every archive is written. Restore rejects incomplete manifests, namespace mismatches, path traversal, and archives whose size or SHA-256 checksum changed. A digest-addressed source is restored through a deterministic `snapshot-<digest>` tag so the original digest reference becomes available again. Use `--kubeconfig`, `--context`, and `--kube-insecure` for Kubernetes access; registry TLS has separate `--src-insecure` and `--dest-insecure` flags.
+The manifest remains `complete: false` until every archive is written. Restore rejects incomplete manifests, namespace mismatches, path traversal, and archives whose size or SHA-256 checksum changed. Version 2 manifests use OCI archives; restore remains compatible with version 1 Docker-archive snapshots. A digest-addressed source is restored through a deterministic `snapshot-<digest>` tag so the original digest reference becomes available again. Use `--kubeconfig`, `--context`, and `--kube-insecure` for Kubernetes access; registry TLS has separate `--src-insecure` and `--dest-insecure` flags.
 
 ---
 

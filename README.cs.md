@@ -667,7 +667,7 @@ Cleanup pracuje s unikátními manifest digesty, takže více tagů stejné imag
 
 ### Snapshot Kubernetes images
 
-`snapshot create` načte reference container a init-container images ze všech Deploymentů v Kubernetes namespace a uloží Docker archivy spolu s průběžně zapisovaným YAML manifestem. Přenos probíhá přímo přes vestavěný copy engine; není potřeba Docker daemon ani druhý proces `oci-toolbox`.
+`snapshot create` načte reference container a init-container images ze všech Deploymentů v Kubernetes namespace a uloží komprimované OCI image-layout archivy spolu s průběžně zapisovaným YAML manifestem. OCI archivy zachovají jak single-platform images, tak kompletní multi-platform image indexy. Přenos probíhá přímo přes vestavěný copy engine; není potřeba Docker daemon ani druhý proces `oci-toolbox`.
 
 ```bash
 # Použije current-context z kubeconfigu.
@@ -688,7 +688,7 @@ oci-toolbox snapshot restore \
   ./snapshots/example/20260728-120000.yml
 ```
 
-Manifest zůstává `complete: false`, dokud nejsou zapsány všechny archivy. Restore odmítne nekompletní manifest, jiný namespace, path traversal i archiv se změněnou velikostí nebo SHA-256 checksumem. Zdroj zadaný digestem se obnoví přes deterministický tag `snapshot-<digest>`, takže původní digest reference začne být znovu dostupná. Pro Kubernetes přístup slouží `--kubeconfig`, `--context` a `--kube-insecure`; registry TLS má oddělené flagy `--src-insecure` a `--dest-insecure`.
+Manifest zůstává `complete: false`, dokud nejsou zapsány všechny archivy. Restore odmítne nekompletní manifest, jiný namespace, path traversal i archiv se změněnou velikostí nebo SHA-256 checksumem. Manifesty verze 2 používají OCI archivy; restore zůstává kompatibilní se staršími Docker archivy z manifestů verze 1. Zdroj zadaný digestem se obnoví přes deterministický tag `snapshot-<digest>`, takže původní digest reference začne být znovu dostupná. Pro Kubernetes přístup slouží `--kubeconfig`, `--context` a `--kube-insecure`; registry TLS má oddělené flagy `--src-insecure` a `--dest-insecure`.
 
 ---
 

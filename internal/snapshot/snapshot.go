@@ -18,7 +18,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const ManifestVersion = 1
+const (
+	ManifestVersion      = 2
+	dockerArchiveVersion = 1
+)
 
 type ImageLister interface {
 	ListImages(context.Context, string) ([]string, error)
@@ -124,8 +127,8 @@ func Backup(ctx context.Context, lister ImageLister, copier Copier, opts BackupO
 		usedNames[archive] = true
 		archivePath := filepath.Join(snapshotDir, archive)
 		partPath := filepath.Join(snapshotDir, "."+archive+".part")
-		fmt.Fprintf(opts.Stdout, "Backing up docker://%s -> file://%s\n", source, archivePath)
-		if err := copier.Copy(ctx, "docker://"+source, "file://"+partPath, CopyOptions{
+		fmt.Fprintf(opts.Stdout, "Backing up docker://%s -> oci-archive://%s\n", source, archivePath)
+		if err := copier.Copy(ctx, "docker://"+source, "oci-archive://"+partPath, CopyOptions{
 			SrcCreds: opts.SrcCreds, SrcInsecure: opts.SrcInsecure, Progress: true,
 		}); err != nil {
 			_ = os.Remove(partPath)
@@ -173,7 +176,7 @@ func Restore(ctx context.Context, copier Copier, opts RestoreOptions) error {
 	if err := decoder.Decode(&manifest); err != nil {
 		return fmt.Errorf("parse manifest: %w", err)
 	}
-	if manifest.Version != ManifestVersion {
+	if manifest.Version != dockerArchiveVersion && manifest.Version != ManifestVersion {
 		return fmt.Errorf("unsupported manifest version %d", manifest.Version)
 	}
 	if opts.Namespace == "" {
@@ -204,8 +207,12 @@ func Restore(ctx context.Context, copier Copier, opts RestoreOptions) error {
 		if size != image.Size || digest != image.SHA256 {
 			return fmt.Errorf("archive integrity check failed: %s", archivePath)
 		}
-		fmt.Fprintf(opts.Stdout, "Restoring file://%s -> docker://%s\n", archivePath, image.Destination)
-		if err := copier.Copy(ctx, "file://"+archivePath, "docker://"+image.Destination, CopyOptions{
+		sourceScheme := "oci-archive://"
+		if manifest.Version == dockerArchiveVersion {
+			sourceScheme = "file://"
+		}
+		fmt.Fprintf(opts.Stdout, "Restoring %s%s -> docker://%s\n", sourceScheme, archivePath, image.Destination)
+		if err := copier.Copy(ctx, sourceScheme+archivePath, "docker://"+image.Destination, CopyOptions{
 			DestCreds: opts.DestCreds, DestInsecure: opts.DestInsecure, Progress: true,
 		}); err != nil {
 			return fmt.Errorf("restoring image %q: %w", image.Destination, err)
@@ -292,12 +299,12 @@ func archiveName(ref string, used map[string]bool) string {
 	if colon := strings.LastIndex(last, ":"); colon >= 0 {
 		last = last[:colon]
 	}
-	name := unsafeFilename.ReplaceAllString(last, "_") + ".tgz"
+	name := unsafeFilename.ReplaceAllString(last, "_") + ".oci.tgz"
 	if !used[name] {
 		return name
 	}
 	sum := sha256.Sum256([]byte(ref))
-	return strings.TrimSuffix(name, ".tgz") + "-" + hex.EncodeToString(sum[:4]) + ".tgz"
+	return strings.TrimSuffix(name, ".oci.tgz") + "-" + hex.EncodeToString(sum[:4]) + ".oci.tgz"
 }
 
 func restorableDestination(source string) string {

@@ -24,6 +24,7 @@ import (
 	"github.com/martinmares/oci-toolbox/internal/bundle"
 	"github.com/martinmares/oci-toolbox/internal/image"
 	"github.com/martinmares/oci-toolbox/internal/logging"
+	"github.com/martinmares/oci-toolbox/internal/ociarchive"
 	"github.com/martinmares/oci-toolbox/internal/progress"
 	"github.com/martinmares/oci-toolbox/internal/recipe"
 )
@@ -720,9 +721,11 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 
 	// --- setup progress UI ---
 	srcIsDaemon := isDaemonRef(src)
-	srcIsFile := isFileRef(src)
+	srcIsOCIArchive := isOCIArchiveRef(src)
+	srcIsFile := isFileRef(src) || srcIsOCIArchive
 	dstIsDaemon := isDaemonRef(dst)
-	isFileDst := strings.HasPrefix(dst, "file://")
+	dstIsOCIArchive := isOCIArchiveRef(dst)
+	isFileDst := isFileRef(dst) || dstIsOCIArchive
 	if len(additionalDestTags) > 0 && (isFileDst || dstIsDaemon) {
 		return fmt.Errorf("--dest-tag is supported only for registry destinations")
 	}
@@ -765,6 +768,8 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 		ui.Run()
 		if srcCh != nil && !srcIsDaemon && !srcIsFile {
 			srcOpts = append(srcOpts, remote.WithProgress(srcCh))
+		} else if dstCh != nil && dstIsOCIArchive && !srcIsDaemon && !srcIsFile {
+			srcOpts = append(srcOpts, remote.WithProgress(dstCh))
 		}
 	} else if opts.ProgressJSON {
 		jsonEmitter = progress.NewJSONEmitter(os.Stdout)
@@ -794,9 +799,32 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 		srcIndex    v1.ImageIndex
 		indexDigest string
 		srcLabel    string
+		archiveRoot *ociarchive.Content
 		err         error
 	)
-	if srcIsFile {
+	if srcIsOCIArchive {
+		filePath := strings.TrimPrefix(src, "oci-archive://")
+		srcLabel = filePath
+		setPhase("loading source image from OCI archive")
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("pull", filePath)
+		}
+		archiveRoot, err = ociarchive.Open(filePath)
+		if err == nil {
+			defer archiveRoot.Close()
+			img = archiveRoot.Image
+			srcIndex = archiveRoot.Index
+			if srcIndex != nil {
+				var digest v1.Hash
+				digest, err = srcIndex.Digest()
+				indexDigest = digest.String()
+			}
+		}
+		if err != nil {
+			closeProg(srcCh, dstCh)
+			return fmt.Errorf("loading source image from OCI archive %q: %w", filePath, err)
+		}
+	} else if isFileRef(src) {
 		filePath := strings.TrimPrefix(src, "file://")
 		srcLabel = filePath
 		if opts.Debug {
@@ -865,22 +893,6 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 			return fmt.Errorf("pulling source image: %w", getErr)
 		}
 		if desc.MediaType.IsIndex() {
-			if len(opts.RecipePaths) > 0 || opts.Reduce || opts.ReduceChanges {
-				closeProg(srcCh, dstCh)
-				return fmt.Errorf("recipes and layer reduction are not supported when copying a multi-platform image index")
-			}
-			if isFileDst || dstIsDaemon {
-				closeProg(srcCh, dstCh)
-				return fmt.Errorf("multi-platform image indexes can currently be copied only between registries")
-			}
-			if opts.DestNoReuse {
-				closeProg(srcCh, dstCh)
-				return fmt.Errorf("--dest-no-reuse is not supported when copying a multi-platform image index")
-			}
-			if len(additionalDestTags) > 0 {
-				closeProg(srcCh, dstCh)
-				return fmt.Errorf("--dest-tag is not supported when copying a multi-platform image index")
-			}
 			srcIndex, err = desc.ImageIndex()
 			indexDigest = desc.Digest.String()
 		} else {
@@ -896,6 +908,47 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 	}
 
 	if srcIndex != nil {
+		if len(opts.RecipePaths) > 0 || opts.Reduce || opts.ReduceChanges || opts.WrapEntrypoint || opts.NoWrapEntrypoint {
+			closeProg(srcCh, dstCh)
+			return fmt.Errorf("recipes, layer reduction, and entrypoint wrapping are not supported when copying a multi-platform image index")
+		}
+		if (isFileDst && !dstIsOCIArchive) || dstIsDaemon {
+			closeProg(srcCh, dstCh)
+			return fmt.Errorf("multi-platform image indexes can currently be copied only between registries or OCI archives")
+		}
+		if opts.DestNoReuse {
+			closeProg(srcCh, dstCh)
+			return fmt.Errorf("--dest-no-reuse is not supported when copying a multi-platform image index")
+		}
+		if len(additionalDestTags) > 0 {
+			closeProg(srcCh, dstCh)
+			return fmt.Errorf("--dest-tag is not supported when copying a multi-platform image index")
+		}
+		if dstIsOCIArchive {
+			filePath := strings.TrimPrefix(dst, "oci-archive://")
+			setPhase("writing OCI archive")
+			if jsonEmitter != nil {
+				jsonEmitter.Phase("save", filePath)
+			}
+			if err := ociarchive.WriteIndex(filePath, srcIndex); err != nil {
+				closeProg(nil, dstCh)
+				return fmt.Errorf("writing OCI archive: %w", err)
+			}
+			if dstCh != nil {
+				safeClose(dstCh)
+				dstCh = nil
+			}
+			if ui != nil {
+				ui.Wait()
+				printTimings()
+			} else {
+				slog.Info("saved image index OCI archive", "source", srcLabel, "path", filePath)
+			}
+			if jsonEmitter != nil {
+				jsonEmitter.Done("success", "saved image index OCI archive")
+			}
+			return nil
+		}
 		dstParsed, err := name.ParseReference(stripScheme(dst))
 		if err != nil {
 			closeProg(srcCh, dstCh)
@@ -1083,6 +1136,31 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 	}
 
 	// --- push destination ---
+	if dstIsOCIArchive {
+		filePath := strings.TrimPrefix(dst, "oci-archive://")
+		setPhase("writing OCI archive")
+		if jsonEmitter != nil {
+			jsonEmitter.Phase("save", filePath)
+		}
+		if err := ociarchive.WriteImage(filePath, img); err != nil {
+			closeProg(nil, dstCh)
+			return fmt.Errorf("writing OCI archive: %w", err)
+		}
+		if dstCh != nil {
+			safeClose(dstCh)
+			dstCh = nil
+		}
+		if ui != nil {
+			ui.Wait()
+			printTimings()
+		} else {
+			slog.Info("saved image OCI archive", "source", srcLabel, "path", filePath)
+		}
+		if jsonEmitter != nil {
+			jsonEmitter.Done("success", "saved image OCI archive")
+		}
+		return nil
+	}
 	if strings.HasPrefix(dst, "file://") {
 		filePath := strings.TrimPrefix(dst, "file://")
 		// Docker archives require a tag even when the source was addressed by digest.
@@ -1344,6 +1422,10 @@ func isDaemonRef(ref string) bool {
 
 func isFileRef(ref string) bool {
 	return strings.HasPrefix(ref, "file://")
+}
+
+func isOCIArchiveRef(ref string) bool {
+	return strings.HasPrefix(ref, "oci-archive://")
 }
 
 func shouldEagerPull(isFileDst, progressEnabled, progressJSONEnabled bool) bool {

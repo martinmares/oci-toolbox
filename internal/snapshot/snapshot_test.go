@@ -34,8 +34,8 @@ func (f *fakeCopier) Copy(_ context.Context, source, destination string, options
 	if f.err != nil {
 		return f.err
 	}
-	if f.createDestination && strings.HasPrefix(destination, "file://") && strings.HasSuffix(destination, ".part") {
-		return os.WriteFile(strings.TrimPrefix(destination, "file://"), []byte("archive"), 0o644)
+	if f.createDestination && strings.HasPrefix(destination, "oci-archive://") && strings.HasSuffix(destination, ".part") {
+		return os.WriteFile(strings.TrimPrefix(destination, "oci-archive://"), []byte("archive"), 0o644)
 	}
 	return nil
 }
@@ -60,6 +60,9 @@ func TestBackupWritesCompleteManifestAndCopiesImages(t *testing.T) {
 	if !copier.calls[0].options.SrcInsecure || !copier.calls[0].options.Progress {
 		t.Fatalf("copy options = %#v", copier.calls[0].options)
 	}
+	if !strings.HasPrefix(copier.calls[0].destination, "oci-archive://") {
+		t.Fatalf("destination = %q, want OCI archive", copier.calls[0].destination)
+	}
 
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -69,8 +72,11 @@ func TestBackupWritesCompleteManifestAndCopiesImages(t *testing.T) {
 	if err := yaml.Unmarshal(raw, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if !manifest.Complete || len(manifest.Images) != 2 {
+	if manifest.Version != ManifestVersion || !manifest.Complete || len(manifest.Images) != 2 {
 		t.Fatalf("manifest = %#v", manifest)
+	}
+	if !strings.HasSuffix(manifest.Images[0].Archive, ".oci.tgz") {
+		t.Fatalf("archive = %q, want .oci.tgz suffix", manifest.Images[0].Archive)
 	}
 	if manifest.Images[0].SHA256 == "" || manifest.Images[0].Size != int64(len("archive")) {
 		t.Fatalf("archive metadata = %#v", manifest.Images[0])
@@ -161,6 +167,42 @@ func TestRestoreVerifiesArchiveAndCopiesImages(t *testing.T) {
 	}
 	if !copier.calls[0].options.DestInsecure || !copier.calls[0].options.Progress {
 		t.Fatalf("copy options = %#v", copier.calls[0].options)
+	}
+	if !strings.HasPrefix(copier.calls[0].source, "file://") {
+		t.Fatalf("source = %q, want legacy Docker archive", copier.calls[0].source)
+	}
+}
+
+func TestRestoreVersionTwoUsesOCIArchive(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "20260630-193000")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "app.oci.tgz")
+	if err := os.WriteFile(archive, []byte("archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest, size, err := fileMetadata(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{Version: ManifestVersion, Namespace: "example", Complete: true, Images: []ManifestImage{{
+		Archive: "20260630-193000/app.oci.tgz", Destination: "registry.example.com/team/app:1",
+		SHA256: digest, Size: size,
+	}}}
+	manifestPath := filepath.Join(root, "20260630-193000.yml")
+	if err := writeManifest(manifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+	copier := &fakeCopier{}
+	if err := Restore(context.Background(), copier, RestoreOptions{
+		ManifestPath: manifestPath, Namespace: "example", Stdout: io.Discard, Stderr: io.Discard,
+	}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if len(copier.calls) != 1 || !strings.HasPrefix(copier.calls[0].source, "oci-archive://") {
+		t.Fatalf("calls = %#v, want OCI archive source", copier.calls)
 	}
 }
 
