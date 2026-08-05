@@ -20,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/martinmares/oci-toolbox/internal/bundle"
+	"github.com/martinmares/oci-toolbox/internal/progress"
 	"github.com/martinmares/oci-toolbox/internal/testutil"
 )
 
@@ -153,6 +154,31 @@ images:
 	if got := strings.Join(reconstructed.Images[0].ExtraTags, ","); got != "stable" {
 		t.Fatalf("reconstructed extra tags = %q", got)
 	}
+	published, err := bundle.LoadRelease(firstOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyReport, err := verifyReleaseRegistry(t.Context(), firstOutput, published, registryOptions("", true), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifyReport.Summary != (releaseVerifySummary{Verified: 1}) {
+		t.Fatalf("registry verification = %#v", verifyReport)
+	}
+	var verifyProgress bytes.Buffer
+	verifyCounter := progress.NewCounter(len(published.Images), "verify registry images", &verifyProgress)
+	verifyReport, err = verifyReleaseRegistry(t.Context(), firstOutput, published, registryOptions("", true), verifyCounter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCounter.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"verify tag 1/1: api/application", "1/1", "100%"} {
+		if !strings.Contains(verifyProgress.String(), want) {
+			t.Fatalf("verification progress does not contain %q: %q", want, verifyProgress.String())
+		}
+	}
 
 	armImage := testutil.NewImageWithFiles(t, map[string][]byte{"app.txt": []byte("arm")})
 	armConfig, err := armImage.ConfigFile()
@@ -239,6 +265,211 @@ images:
 	if !copiedIndex.MediaType.IsIndex() || copiedIndex.Digest.String() != indexDigest.String() {
 		t.Fatalf("copied index descriptor = %#v, want digest %s", copiedIndex.Descriptor, indexDigest)
 	}
+}
+
+func TestSelectiveBundlePublishUpdatesOnlySelectedDeploymentTargets(t *testing.T) {
+	server := httptest.NewServer(registry.New())
+	defer server.Close()
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	apiV1 := writeTestRegistryImage(t, serverURL.Host+"/source/api:build-1", "api-v1")
+	workerV1 := writeTestRegistryImage(t, serverURL.Host+"/source/worker:build-1", "worker-v1")
+	tempDir := t.TempDir()
+	bundlePath := filepath.Join(tempDir, "bundle.yml")
+	writeSelectiveBundle := func(apiTag, workerTag string) {
+		t.Helper()
+		data := fmt.Sprintf(`name: selective
+registries:
+  source:
+    url: %s
+  target:
+    url: %s
+    project: release
+images:
+  - id: api
+    source: {repository: source/api, tag: %s}
+    target: {repository: api}
+    deployment: {app_name: api, container_name: application}
+  - id: worker
+    source: {repository: source/worker, tag: %s}
+    target: {repository: worker}
+    deployment: {app_name: worker, container_name: application}
+`, serverURL.Host, serverURL.Host, apiTag, workerTag)
+		if err := os.WriteFile(bundlePath, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	restore := saveBundleCommandState()
+	t.Cleanup(restore)
+	bundlePublishOptions.srcInsecure = true
+	bundlePublishOptions.destInsecure = true
+	cmd := &cobra.Command{}
+
+	writeSelectiveBundle("build-1", "build-1")
+	bundleOptions.releaseID = "release-1"
+	baseOutput := filepath.Join(tempDir, "release-1.yml")
+	bundlePublishOptions.output = baseOutput
+	if err := runBundlePublish(cmd, []string{bundlePath}); err != nil {
+		t.Fatalf("base publish: %v", err)
+	}
+	baseOnlyDigest := writeTestRegistryIndex(t, serverURL.Host+"/release/sidecar:release-1")
+	baseManifest := readReleaseManifest(t, baseOutput)
+	baseManifest.Images = append(baseManifest.Images, bundle.ReleaseImage{
+		ID: "sidecar", AppName: "platform", ContainerName: "sidecar",
+		Image: serverURL.Host + "/release/sidecar", Tag: "release-1", Digest: baseOnlyDigest, Platform: "multi-platform",
+	})
+	overwriteReleaseManifest(t, baseOutput, &baseManifest)
+
+	apiV2 := writeTestRegistryImage(t, serverURL.Host+"/source/api:build-2", "api-v2")
+	writeSelectiveBundle("build-2", "does-not-exist")
+	bundleOptions.releaseID = "release-2"
+	bundlePublishOptions.baseRelease = baseOutput
+	bundlePublishOptions.selectors = []string{"api/application"}
+	bundlePublishOptions.preserveBaseOnly = true
+	bundlePublishOptions.progress = true
+	selectiveOutput := filepath.Join(tempDir, "release-2.yml")
+	bundlePublishOptions.output = selectiveOutput
+	var selectiveProgress bytes.Buffer
+	cmd.SetErr(&selectiveProgress)
+	if err := runBundlePublish(cmd, []string{bundlePath}); err != nil {
+		t.Fatalf("selective publish: %v", err)
+	}
+	for _, want := range []string{"preflight target 3/3: platform/sidecar", "3/3", "100%"} {
+		if !strings.Contains(selectiveProgress.String(), want) {
+			t.Fatalf("preflight progress does not contain %q: %q", want, selectiveProgress.String())
+		}
+	}
+
+	manifest := readReleaseManifest(t, selectiveOutput)
+	if manifest.ReleaseID != "release-2" || len(manifest.Images) != 3 || manifest.Platform != "" {
+		t.Fatalf("manifest = %#v", manifest)
+	}
+	bySelector := make(map[string]bundle.ReleaseImage, len(manifest.Images))
+	for _, item := range manifest.Images {
+		bySelector[item.AppName+"/"+item.ContainerName] = item
+		if item.Tag != "release-2" {
+			t.Errorf("%s/%s tag = %q", item.AppName, item.ContainerName, item.Tag)
+		}
+	}
+	if got := bySelector["api/application"]; got.Digest != apiV2 || got.Digest == apiV1 || got.Source == nil || got.Source.Image != serverURL.Host+"/source/api" {
+		t.Fatalf("selected api = %#v", got)
+	}
+	if got := bySelector["worker/application"]; got.Digest != workerV1 || got.Source == nil || got.Source.Image != serverURL.Host+"/release/worker" || got.Source.Digest != workerV1 {
+		t.Fatalf("reused worker = %#v", got)
+	}
+	if got := bySelector["platform/sidecar"]; got.Digest != baseOnlyDigest || got.Source == nil || got.Source.Image != serverURL.Host+"/release/sidecar" || got.Source.Digest != baseOnlyDigest || got.Platform != "multi-platform" {
+		t.Fatalf("preserved base-only sidecar = %#v", got)
+	}
+	for _, test := range []struct {
+		ref    string
+		digest string
+	}{
+		{serverURL.Host + "/release/api:release-2", apiV2},
+		{serverURL.Host + "/release/worker:release-2", workerV1},
+		{serverURL.Host + "/release/sidecar:release-2", baseOnlyDigest},
+	} {
+		ref, err := name.NewTag(test.ref, name.Insecure)
+		if err != nil {
+			t.Fatal(err)
+		}
+		desc, err := remote.Get(ref)
+		if err != nil {
+			t.Fatalf("get %s: %v", test.ref, err)
+		}
+		if desc.Digest.String() != test.digest {
+			t.Errorf("%s digest = %s, want %s", test.ref, desc.Digest, test.digest)
+		}
+	}
+}
+
+func TestSameImageRepository(t *testing.T) {
+	if !sameImageRepository("docker://registry.example.com/team/api", "registry.example.com/team/api/") {
+		t.Fatal("equivalent repositories were not recognized")
+	}
+	if sameImageRepository("registry.example.com/team/api", "registry.example.com/team/worker") {
+		t.Fatal("different repositories were recognized as equal")
+	}
+}
+
+func writeTestRegistryIndex(t *testing.T, refValue string) string {
+	t.Helper()
+	images := make([]v1.Image, 0, 2)
+	for _, architecture := range []string{"amd64", "arm64"} {
+		image := testutil.NewImageWithFiles(t, map[string][]byte{"architecture.txt": []byte(architecture)})
+		config, err := image.ConfigFile()
+		if err != nil {
+			t.Fatal(err)
+		}
+		config.OS, config.Architecture = "linux", architecture
+		image, err = mutate.ConfigFile(image, config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		images = append(images, image)
+	}
+	index := mutate.AppendManifests(
+		empty.Index,
+		mutate.IndexAddendum{Add: images[0], Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}}},
+		mutate.IndexAddendum{Add: images[1], Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "arm64"}}},
+	)
+	ref, err := name.NewTag(refValue, name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.WriteIndex(ref, index); err != nil {
+		t.Fatalf("write %s: %v", refValue, err)
+	}
+	digest, err := index.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest.String()
+}
+
+func overwriteReleaseManifest(t *testing.T, path string, manifest *bundle.ReleaseManifest) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bundle.EncodeRelease(f, manifest); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTestRegistryImage(t *testing.T, refValue, content string) string {
+	t.Helper()
+	ref, err := name.NewTag(refValue, name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := testutil.NewImageWithFiles(t, map[string][]byte{"app.txt": []byte(content)})
+	config, err := image.ConfigFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.OS = "linux"
+	config.Architecture = "amd64"
+	image, err = mutate.ConfigFile(image, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(ref, image); err != nil {
+		t.Fatalf("write %s: %v", refValue, err)
+	}
+	digest, err := image.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest.String()
 }
 
 func assertPublishedRelease(t *testing.T, path, digest string) {

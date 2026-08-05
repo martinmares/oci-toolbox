@@ -76,15 +76,16 @@ type Plan struct {
 }
 
 type PlanImage struct {
-	ID            string
-	SourceRef     string
-	SourceImage   string
-	RequestedTag  string
-	TargetImage   string
-	TargetRef     string
-	AppName       string
-	ContainerName string
-	ExtraTags     []string
+	ID              string
+	SourceRef       string
+	SourceImage     string
+	RequestedTag    string
+	TargetImage     string
+	TargetRef       string
+	AppName         string
+	ContainerName   string
+	ExtraTags       []string
+	FromBaseRelease bool
 }
 
 func Load(path string) (*Bundle, error) {

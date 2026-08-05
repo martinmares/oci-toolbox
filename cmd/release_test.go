@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -215,4 +216,139 @@ func TestWriteReleaseManifest(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("second write error = %v", err)
 	}
+}
+
+func TestRunReleaseSelectorsPlain(t *testing.T) {
+	manifestPath := writeCompareReleaseManifest(t, "R1", []bundle.ReleaseImage{
+		{ID: "worker", AppName: "worker", ContainerName: "application", Image: "registry.example.com/worker", Tag: "R1", Digest: testReleaseDigest("b")},
+		{ID: "api", AppName: "api", ContainerName: "application", Image: "registry.example.com/api", Tag: "R1", Digest: testReleaseDigest("a")},
+	})
+	previous := selectorsOptions
+	t.Cleanup(func() { selectorsOptions = previous })
+	selectorsOptions.format = "plain"
+	cmd := &cobra.Command{}
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+
+	if err := runReleaseSelectors(cmd, []string{manifestPath}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stdout.String(), "api/application\nworker/application\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestRunReleaseCompareJSONChangedOnlyAndFail(t *testing.T) {
+	aPath := writeCompareReleaseManifest(t, "R1", []bundle.ReleaseImage{
+		{ID: "api", AppName: "api", ContainerName: "application", Image: "registry.example.com/api", Tag: "R1", Digest: testReleaseDigest("a")},
+		{ID: "worker", AppName: "worker", ContainerName: "application", Image: "registry.example.com/worker", Tag: "R1", Digest: testReleaseDigest("b")},
+	})
+	bPath := writeCompareReleaseManifest(t, "R2", []bundle.ReleaseImage{
+		{ID: "api", AppName: "api", ContainerName: "application", Image: "registry.example.com/api", Tag: "R2", Digest: testReleaseDigest("c")},
+		{ID: "worker", AppName: "worker", ContainerName: "application", Image: "registry.example.com/worker", Tag: "R1", Digest: testReleaseDigest("b")},
+	})
+	previous := compareOptions
+	t.Cleanup(func() { compareOptions = previous })
+	compareOptions = releaseCompareOptions{mode: "digest", format: "json", color: "never", changedOnly: true, failOnChange: true}
+	cmd := &cobra.Command{}
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+
+	err := runReleaseCompare(cmd, []string{aPath, bPath})
+	if err == nil || !strings.Contains(err.Error(), "1 changed") {
+		t.Fatalf("error = %v", err)
+	}
+	var report struct {
+		Mode      string                    `json:"mode"`
+		MatchedBy string                    `json:"matched_by"`
+		Match     bool                      `json:"match"`
+		Summary   bundle.ReleaseDiffSummary `json:"summary"`
+		Images    []bundle.ReleaseDiff      `json:"images"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, stdout.String())
+	}
+	if report.Summary.Changed != 1 || report.Summary.Same != 1 {
+		t.Fatalf("summary = %#v", report.Summary)
+	}
+	if report.Mode != "digest" || report.MatchedBy != "app_name/container_name" || report.Match {
+		t.Fatalf("comparison metadata = mode %q, matched_by %q, match %v", report.Mode, report.MatchedBy, report.Match)
+	}
+	if len(report.Images) != 1 || report.Images[0].Selector != "api/application" || report.Images[0].Status != "changed" {
+		t.Fatalf("images = %#v", report.Images)
+	}
+}
+
+func TestRunReleaseCompareSummary(t *testing.T) {
+	images := []bundle.ReleaseImage{{
+		ID: "api", AppName: "api", ContainerName: "application", Image: "registry.example.com/api", Tag: "R1", Digest: testReleaseDigest("a"),
+	}}
+	aPath := writeCompareReleaseManifest(t, "R1", images)
+	images[0].Tag = "R2"
+	bPath := writeCompareReleaseManifest(t, "R2", images)
+	previous := compareOptions
+	t.Cleanup(func() { compareOptions = previous })
+	compareOptions = releaseCompareOptions{mode: "digest", format: "summary", color: "never"}
+	cmd := &cobra.Command{}
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+
+	if err := runReleaseCompare(cmd, []string{aPath, bPath}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stdout.String(), "MATCH: same=1 changed=0 added=0 removed=0\n"; got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+}
+
+func TestWriteReleaseComparisonTableColorizesOnlyStatuses(t *testing.T) {
+	comparison := bundle.ReleaseComparison{
+		Summary: bundle.ReleaseDiffSummary{Changed: 1, Added: 1, Removed: 1},
+		Images: []bundle.ReleaseDiff{
+			{Status: "added", Selector: "new/app", B: &bundle.ReleaseImageState{Digest: testReleaseDigest("a")}},
+			{Status: "changed", Selector: "api/app", A: &bundle.ReleaseImageState{Digest: testReleaseDigest("b")}, B: &bundle.ReleaseImageState{Digest: testReleaseDigest("c")}},
+			{Status: "removed", Selector: "old/app", A: &bundle.ReleaseImageState{Digest: testReleaseDigest("d")}},
+		},
+	}
+	cmd := &cobra.Command{}
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	if err := writeReleaseComparisonTable(cmd, comparison.Images, comparison.Summary, bundle.ReleaseCompareDigest, true); err != nil {
+		t.Fatal(err)
+	}
+	got := stdout.String()
+	for _, want := range []string{ansiGreen + "added" + ansiReset, ansiYellow + "changed" + ansiReset, ansiRed + "removed" + ansiReset} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("colored output does not contain %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, ansiGreen+testReleaseDigest("a")) {
+		t.Fatalf("digest must not be colorized:\n%s", got)
+	}
+}
+
+func writeCompareReleaseManifest(t *testing.T, releaseID string, images []bundle.ReleaseImage) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), releaseID+".yml")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := &bundle.ReleaseManifest{
+		ReleaseID: releaseID,
+		CreatedAt: time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC),
+		Images:    images,
+	}
+	if err := bundle.EncodeRelease(f, manifest); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func testReleaseDigest(char string) string {
+	return "sha256:" + strings.Repeat(char, 64)
 }

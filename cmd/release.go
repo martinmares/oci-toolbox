@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -38,6 +41,21 @@ type releaseReconstructOptions struct {
 
 var reconstructOptions releaseReconstructOptions
 
+type releaseSelectorsOptions struct {
+	format string
+}
+
+type releaseCompareOptions struct {
+	mode         string
+	format       string
+	color        string
+	changedOnly  bool
+	failOnChange bool
+}
+
+var selectorsOptions releaseSelectorsOptions
+var compareOptions releaseCompareOptions
+
 var releaseCmd = &cobra.Command{
 	Use:   "release",
 	Short: "Create and inspect release manifests",
@@ -67,6 +85,27 @@ var releaseReconstructCmd = &cobra.Command{
   oci-toolbox release reconstruct --file release-images.yml --output release.yml`,
 }
 
+var releaseSelectorsCmd = &cobra.Command{
+	Use:   "selectors RELEASE_MANIFEST",
+	Short: "List deployment selectors from a release manifest",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runReleaseSelectors,
+	Example: `  oci-toolbox release selectors release.yml
+  oci-toolbox release selectors release.yml --format plain
+  oci-toolbox release selectors release.yml --format json`,
+}
+
+var releaseCompareCmd = &cobra.Command{
+	Use:   "compare RELEASE_A RELEASE_B",
+	Short: "Compare two release manifests by deployment selector",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runReleaseCompare,
+	Example: `  oci-toolbox release compare previous.yml current.yml
+  oci-toolbox release compare previous.yml current.yml --mode digest --format summary
+  oci-toolbox release compare previous.yml current.yml --mode image --format json
+  oci-toolbox release compare previous.yml current.yml --mode full --changed-only --fail-on-change`,
+}
+
 func init() {
 	releaseReconstructCmd.Flags().StringVarP(&reconstructOptions.file, "file", "f", "", "strict YAML file containing image references and deployment selectors")
 	releaseReconstructCmd.Flags().StringVarP(&reconstructOptions.output, "output", "o", "", "release manifest output path")
@@ -81,8 +120,269 @@ func init() {
 	releaseReconstructCmd.Flags().StringVar(&reconstructOptions.kubeContext, "context", "", "Kubernetes context override")
 	releaseReconstructCmd.Flags().BoolVar(&reconstructOptions.kubeInsecure, "kube-insecure", false, "skip Kubernetes API TLS certificate verification")
 	releaseReconstructCmd.Flags().StringVar(&reconstructOptions.imagePrefix, "image-prefix", "", "include only Kubernetes images under this registry/repository prefix")
-	releaseCmd.AddCommand(releaseReconstructCmd)
+	releaseSelectorsCmd.Flags().StringVar(&selectorsOptions.format, "format", "table", "output format: table, plain, or json")
+	releaseCompareCmd.Flags().StringVar(&compareOptions.mode, "mode", "digest", "comparison mode: digest, image, or full")
+	releaseCompareCmd.Flags().StringVar(&compareOptions.format, "format", "table", "output format: table, summary, or json")
+	releaseCompareCmd.Flags().StringVar(&compareOptions.color, "color", "auto", "colorize table and summary output: auto, always, or never")
+	releaseCompareCmd.Flags().BoolVar(&compareOptions.changedOnly, "changed-only", false, "omit unchanged deployment selectors")
+	releaseCompareCmd.Flags().BoolVar(&compareOptions.failOnChange, "fail-on-change", false, "return a non-zero exit status when manifests differ")
+	releaseCmd.AddCommand(releaseReconstructCmd, releaseSelectorsCmd, releaseCompareCmd)
 	rootCmd.AddCommand(releaseCmd)
+}
+
+func runReleaseSelectors(cmd *cobra.Command, args []string) error {
+	format := strings.ToLower(strings.TrimSpace(selectorsOptions.format))
+	if format != "table" && format != "plain" && format != "json" {
+		return fmt.Errorf("invalid --format %q: expected table, plain, or json", selectorsOptions.format)
+	}
+	manifest, err := bundle.LoadRelease(args[0])
+	if err != nil {
+		return err
+	}
+	selectors := bundle.ReleaseSelectors(manifest)
+	switch format {
+	case "plain":
+		for _, item := range selectors {
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), item.Selector); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "json":
+		report := struct {
+			ReleaseID string                   `json:"release_id"`
+			Selectors []bundle.ReleaseSelector `json:"selectors"`
+		}{ReleaseID: manifest.ReleaseID, Selectors: selectors}
+		return writeReleaseJSON(cmd, report)
+	default:
+		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+		if _, err := fmt.Fprintln(w, "SELECTOR\tID\tIMAGE\tTAG\tDIGEST\tPLATFORM"); err != nil {
+			return err
+		}
+		for _, item := range selectors {
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", item.Selector, item.ID, item.Image, item.Tag, item.Digest, item.Platform); err != nil {
+				return err
+			}
+		}
+		return w.Flush()
+	}
+}
+
+func runReleaseCompare(cmd *cobra.Command, args []string) error {
+	format := strings.ToLower(strings.TrimSpace(compareOptions.format))
+	if format != "table" && format != "summary" && format != "json" {
+		return fmt.Errorf("invalid --format %q: expected table, summary, or json", compareOptions.format)
+	}
+	mode, err := releaseComparisonMode(compareOptions.mode)
+	if err != nil {
+		return err
+	}
+	color, err := releaseComparisonColor(cmd, format, compareOptions.color)
+	if err != nil {
+		return err
+	}
+	a, err := bundle.LoadRelease(args[0])
+	if err != nil {
+		return err
+	}
+	b, err := bundle.LoadRelease(args[1])
+	if err != nil {
+		return err
+	}
+	comparison := bundle.CompareReleasesWithMode(a, b, mode)
+	images := comparison.Images
+	if compareOptions.changedOnly {
+		images = changedReleaseImages(images)
+	}
+
+	if format == "json" {
+		report := struct {
+			Mode      string `json:"mode"`
+			MatchedBy string `json:"matched_by"`
+			Match     bool   `json:"match"`
+			ReleaseA  struct {
+				Path      string    `json:"path"`
+				ReleaseID string    `json:"release_id"`
+				CreatedAt time.Time `json:"created_at"`
+			} `json:"release_a"`
+			ReleaseB struct {
+				Path      string    `json:"path"`
+				ReleaseID string    `json:"release_id"`
+				CreatedAt time.Time `json:"created_at"`
+			} `json:"release_b"`
+			Summary bundle.ReleaseDiffSummary `json:"summary"`
+			Images  []bundle.ReleaseDiff      `json:"images"`
+		}{}
+		report.Mode = string(mode)
+		report.MatchedBy = "app_name/container_name"
+		report.Match = !comparison.HasChanges()
+		report.ReleaseA.Path, report.ReleaseA.ReleaseID, report.ReleaseA.CreatedAt = args[0], a.ReleaseID, a.CreatedAt
+		report.ReleaseB.Path, report.ReleaseB.ReleaseID, report.ReleaseB.CreatedAt = args[1], b.ReleaseID, b.CreatedAt
+		report.Summary, report.Images = comparison.Summary, images
+		if err := writeReleaseJSON(cmd, report); err != nil {
+			return err
+		}
+	} else if format == "summary" {
+		if err := writeReleaseComparisonSummary(cmd, comparison, color); err != nil {
+			return err
+		}
+	} else if err := writeReleaseComparisonTable(cmd, images, comparison.Summary, mode, color); err != nil {
+		return err
+	}
+	if compareOptions.failOnChange && comparison.HasChanges() {
+		return fmt.Errorf(
+			"release manifests differ: %d changed, %d added, %d removed",
+			comparison.Summary.Changed, comparison.Summary.Added, comparison.Summary.Removed,
+		)
+	}
+	return nil
+}
+
+func releaseComparisonColor(cmd *cobra.Command, format, value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "always":
+		return format != "json", nil
+	case "never":
+		return false, nil
+	case "auto":
+		if format == "json" || os.Getenv("NO_COLOR") != "" {
+			return false, nil
+		}
+		return isTTYWriter(cmd.OutOrStdout()), nil
+	default:
+		return false, fmt.Errorf("invalid --color %q: expected auto, always, or never", value)
+	}
+}
+
+func releaseComparisonMode(value string) (bundle.ReleaseCompareMode, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "digest":
+		return bundle.ReleaseCompareDigest, nil
+	case "image":
+		return bundle.ReleaseCompareImage, nil
+	case "full":
+		return bundle.ReleaseCompareFull, nil
+	default:
+		return "", fmt.Errorf("invalid --mode %q: expected digest, image, or full", value)
+	}
+}
+
+func writeReleaseJSON(cmd *cobra.Command, value any) error {
+	enc := json.NewEncoder(cmd.OutOrStdout())
+	enc.SetIndent("", "  ")
+	return enc.Encode(value)
+}
+
+func changedReleaseImages(images []bundle.ReleaseDiff) []bundle.ReleaseDiff {
+	filtered := make([]bundle.ReleaseDiff, 0, len(images))
+	for _, item := range images {
+		if item.Status != "same" {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func writeReleaseComparisonTable(cmd *cobra.Command, images []bundle.ReleaseDiff, summary bundle.ReleaseDiffSummary, mode bundle.ReleaseCompareMode, color bool) error {
+	var output bytes.Buffer
+	w := tabwriter.NewWriter(&output, 0, 4, 2, ' ', 0)
+	if mode == bundle.ReleaseCompareDigest {
+		if _, err := fmt.Fprintln(w, "STATUS\tSELECTOR\tDIGEST A\tDIGEST B"); err != nil {
+			return err
+		}
+		for _, item := range images {
+			var digestA, digestB string
+			if item.A != nil {
+				digestA = item.A.Digest
+			}
+			if item.B != nil {
+				digestB = item.B.Digest
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", item.Status, item.Selector, digestA, digestB); err != nil {
+				return err
+			}
+		}
+		if err := writeReleaseComparisonSummaryTo(w, summary); err != nil {
+			return err
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		return writeReleaseComparisonTableOutput(cmd, output.String(), color)
+	}
+	if _, err := fmt.Fprintln(w, "STATUS\tSELECTOR\tCHANGED\tIMAGE A\tTAG A\tDIGEST A\tIMAGE B\tTAG B\tDIGEST B"); err != nil {
+		return err
+	}
+	for _, item := range images {
+		var imageA, tagA, digestA, imageB, tagB, digestB string
+		if item.A != nil {
+			imageA, tagA, digestA = item.A.Image, item.A.Tag, item.A.Digest
+		}
+		if item.B != nil {
+			imageB, tagB, digestB = item.B.Image, item.B.Tag, item.B.Digest
+		}
+		if _, err := fmt.Fprintf(
+			w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			item.Status, item.Selector, strings.Join(item.ChangedFields, ","), imageA, tagA, digestA, imageB, tagB, digestB,
+		); err != nil {
+			return err
+		}
+	}
+	if err := writeReleaseComparisonSummaryTo(w, summary); err != nil {
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	return writeReleaseComparisonTableOutput(cmd, output.String(), color)
+}
+
+func writeReleaseComparisonTableOutput(cmd *cobra.Command, output string, color bool) error {
+	if color {
+		output = colorizeReleaseComparisonTable(output)
+	}
+	_, err := fmt.Fprint(cmd.OutOrStdout(), output)
+	return err
+}
+
+func colorizeReleaseComparisonTable(output string) string {
+	lines := strings.SplitAfter(output, "\n")
+	for i, line := range lines {
+		for status, code := range map[string]string{
+			"added": ansiGreen, "removed": ansiRed, "changed": ansiYellow, "same": ansiDim,
+		} {
+			if strings.HasPrefix(line, status+" ") {
+				lines[i] = code + status + ansiReset + line[len(status):]
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "")
+}
+
+func writeReleaseComparisonSummary(cmd *cobra.Command, comparison bundle.ReleaseComparison, color bool) error {
+	result := "MATCH"
+	code := ansiGreen
+	if comparison.HasChanges() {
+		result = "DIFFERENT"
+		code = ansiRed
+	}
+	if color {
+		result = code + result + ansiReset
+	}
+	_, err := fmt.Fprintf(
+		cmd.OutOrStdout(), "%s: same=%d changed=%d added=%d removed=%d\n",
+		result, comparison.Summary.Same, comparison.Summary.Changed, comparison.Summary.Added, comparison.Summary.Removed,
+	)
+	return err
+}
+
+func writeReleaseComparisonSummaryTo(w *tabwriter.Writer, summary bundle.ReleaseDiffSummary) error {
+	_, err := fmt.Fprintf(
+		w, "\nSUMMARY\tsame=%d changed=%d added=%d removed=%d\n",
+		summary.Same, summary.Changed, summary.Added, summary.Removed,
+	)
+	return err
 }
 
 func runReleaseReconstruct(cmd *cobra.Command, args []string) error {

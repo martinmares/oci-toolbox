@@ -81,6 +81,29 @@ oci-toolbox bundle publish bundle.yml \
   --output releases/RE_2026.07.28.01.yml \
   --progress`, color)
 
+	section(w, "Publish a selective release", color)
+	codeBlock(w, `# Update only named Deployment/container selectors and carry all other
+# immutable digests forward from the previous release.
+oci-toolbox bundle publish bundle.yml \
+  --base-release releases/RE_2026.08.01.01.yml \
+  --release-id RE_2026.08.03.01 \
+  --select zis-aq-bridge/application \
+  --select zis-es-idx-view/application \
+  --output releases/RE_2026.08.03.01.yml \
+  --progress
+
+# selected-images.yml
+selectors:
+  - zis-aq-bridge/application
+  - zis-es-idx-view/application
+
+oci-toolbox bundle publish bundle.yml \
+  --base-release releases/RE_2026.08.01.01.yml \
+  --release-id RE_2026.08.03.01 \
+  --select-file selected-images.yml \
+  --preserve-base-only \
+  --output releases/RE_2026.08.03.01.yml`, color)
+
 	section(w, "Reconstruct a release manifest", color)
 	codeBlock(w, `# Reconstruct exact Deployment/container selectors from Kubernetes.
 oci-toolbox release reconstruct \
@@ -111,8 +134,33 @@ images:
 
 oci-toolbox release reconstruct \
   --file release-images.yml \
-	--release-id RE_2026.07.28.01 \
-	--output releases/RE_2026.07.28.01.yml`, color)
+  --release-id RE_2026.07.28.01 \
+  --output releases/RE_2026.07.28.01.yml`, color)
+
+	section(w, "Inspect, compare, and verify releases", color)
+	codeBlock(w, `# List deployment selectors for selective publishing.
+oci-toolbox release selectors releases/current.yml --format plain
+
+# Compare immutable image content between two releases.
+oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode digest \
+  --format json \
+  --changed-only
+
+# Print a one-line CI-friendly result and fail on digest differences.
+oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode digest \
+  --format summary \
+  --fail-on-change
+
+# Verify immutable digests and primary release tags in the registry.
+oci-toolbox release verify releases/current.yml --progress
+
+# Detect drift against Kubernetes Deployment containers.
+oci-toolbox release verify releases/current.yml \
+  --namespace example \
+  --image-prefix registry.example.com/team \
+  --format json`, color)
 
 	section(w, "Inspect and clean a registry", color)
 	codeBlock(w, `# oci-toolbox-registry.yml

@@ -20,6 +20,8 @@
   - [Příkaz examples](#příkaz-examples)
   - [bundle](#bundle)
   - [release reconstruct](#release-reconstruct)
+  - [release selectors a compare](#release-selectors-a-compare)
+  - [release verify](#release-verify)
   - [Údržba registry](#údržba-registry)
   - [Snapshot Kubernetes images](#snapshot-kubernetes-images)
 - [Git repository pro releases](#git-repository-pro-releases)
@@ -563,7 +565,48 @@ oci-toolbox bundle publish bundle.yml \
 
 `bundle publish` před kopírováním zkontroluje všechny image. Chybějící primární release tag vytvoří, existující shodný digest považuje za idempotentní opakování a při existujícím tagu s jiným digestem skončí chybou. Extra tagy jako `stable` jsou pohyblivé aliasy. Výstupní soubor nesmí existovat. Git commit, tag ani push záměrně nejsou úlohou `oci-toolbox`; provádí je CI nebo volající skript.
 
-První implementace bundle podporuje pouze samostatné `linux/amd64` image manifesty. OCI indexy a jiné platformy explicitně odmítne.
+#### Selektivní release z base manifestu
+
+Pokud se mají publikovat pouze vyjmenované kontejnery aplikací a všechny ostatní digesty převzít z existujícího release, předej předchozí manifest a opakuj `--select` s deployment identitou `app_name/container_name`:
+
+```bash
+oci-toolbox bundle publish bundles/stable.yml \
+  --base-release releases/RE_2026.08.01.01.yml \
+  --release-id RE_2026.08.03.01 \
+  --select zis-aq-bridge/application \
+  --select zis-es-idx-view/application \
+  --output releases/RE_2026.08.03.01.yml \
+  --progress
+```
+
+Pro delší seznam použij striktní YAML soubor:
+
+```yaml
+selectors:
+  - zis-aq-bridge/application
+  - zis-es-idx-view/application
+```
+
+```bash
+oci-toolbox bundle publish bundles/stable.yml \
+  --base-release releases/RE_2026.08.01.01.yml \
+  --release-id RE_2026.08.03.01 \
+  --select-file selected-images.yml \
+  --preserve-base-only \
+  --output releases/RE_2026.08.03.01.yml
+```
+
+Selector je záměrně založený na dvojici `(app_name, container_name)`, nikoliv na měnitelném tagu nebo názvu repository. Vybrané položky použijí aktuální source z bundle. Nevybrané položky se načtou z base release podle neměnného digestu a dostanou nový tag `release_id`; jejich digest se tedy nemůže změnit. Ve výchozím režimu musí mít base release a bundle shodné deployment selektory i cílové repository. S `--preserve-base-only` se base release stane autoritativní šablonou nového release: zachová se jeho seznam i pořadí položek, vybrané bloky se nahradí daty z bundle a všechny ostatní se převezmou beze změny digestu. Nevybrané položky existující pouze v bundle se ignorují. Vybraný selector musí existovat v base release i bundle; tím se zabrání nechtěnému přidání nebo odebrání deploymentu. Chybějící, duplicitní nebo chybně zapsané selectory a změna cílové repository vybrané položky skončí chybou ještě před zápisem do registry. `--select` a `--select-file` lze kombinovat.
+
+Pokud není nastaveno ani `--dest-registry`, ani `registries.target.url`, selective publish nejprve použije `registry_base` z base release. Když chybí, cílový prefix odvodí ze společných deployment selectorů odebráním odpovídajícího bundle `target.repository` z base image. Odvození uspěje pouze tehdy, když všechny společné položky vedou ke stejnému prefixu; explicitní destination má vždy přednost.
+
+Pro vybrané bundle images se použijí source registry credentials. Destination registry credentials se použijí také jako source credentials při převzetí nevybraných images z předchozího release.
+
+Pokud převzatá base image zůstává ve stejné repository, publish vytvoří nový release tag přímo přes registry API a nepřenáší žádné vrstvy. Úplný pull/push se provádí pouze pro vybrané images nebo při rozdílné source a target repository.
+
+S `--progress` se před samotným přenosem zobrazuje samostatný `preflight` progress bar. Ukazuje počet zkontrolovaných images, právě ověřovaný selector a zda se kontroluje source digest nebo cílový tag.
+
+Nové images vybrané z bundle zatím podporují pouze samostatné `linux/amd64` manifesty. Nevybrané a base-only images převzaté přes neměnný digest mohou být také multi-platform OCI indexy; dostanou nový tag bez výběru nebo změny konkrétní platformy.
 
 ### release reconstruct
 
@@ -618,6 +661,85 @@ oci-toolbox release reconstruct \
 ```
 
 Každá image se uloží pomocí digestu získaného z registry. Vyhledání tagů je explicitní: `--discover-tags` načte tagy repository, ověří jejich digesty a zaznamená všechny tagy ukazující na stejný digest. Explicitní vstupní tag zůstane primárním `tag`; u vstupu s digestem dostane přednost tag shodný s `release_id`, potom jediný jednoznačný nalezený tag. Ostatní shody se uloží do `extra_tags` konkrétní image. Každý `--extra-tag` se zaznamená pouze tehdy, když příkaz ověří, že už ukazuje na stejný digest. `--progress` zobrazí počet zkontrolovaných images, rychlost a ETA. Samostatná image zapíše skutečné `os/architecture`; OCI index se uzamkne digestem celého indexu a zapíše se jako `platform: multi-platform`. Pokud vstup kombinuje různé typy platforem, společná platforma na úrovni manifestu se vynechá.
+
+### release selectors a compare
+
+Stabilní identity `app_name/container_name`, které lze předat do `bundle publish --select`, vypíše:
+
+```bash
+# Tabulka pro člověka včetně detailů image
+oci-toolbox release selectors releases/RE_2026.08.03.01.yml
+
+# Jeden selector na řádek pro shell pipeline nebo generování selection souboru
+oci-toolbox release selectors releases/RE_2026.08.03.01.yml --format plain
+
+# Strukturovaný výstup s release_id a detaily images
+oci-toolbox release selectors releases/RE_2026.08.03.01.yml --format json
+```
+
+Dva manifesty se porovnávají podle stejné identity. Porovnání je směrové z A do B a rozlišuje `same`, `changed`, `added` a `removed`. K dispozici jsou tři režimy:
+
+- `--mode digest` je výchozí a porovnává pouze neměnné SHA digesty. Hodí se pro porovnání release vytvořeného jiným systémem s manifestem rekonstruovaným z clusteru.
+- `--mode image` porovnává repository, digest a platformu. Tagy jsou pouze informativní, takže samotné přetagování novým release ID stav obsahu nezmění.
+- `--mode full` porovnává všechna per-image release data: ID, source, repository, tag, digest, extra tags a platformu. Release ID a čas vytvoření na nejvyšší úrovni nejsou součástí identity image.
+
+Ve všech režimech se řádky párují podle `app_name/container_name`; chybějící a nově přidané selectory jsou vždy rozdíl.
+
+```bash
+# Kompaktní tabulka digestů (výchozí režim)
+oci-toolbox release compare releases/previous.yml releases/current.yml
+
+# Jednořádkový výsledek
+oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode digest \
+  --format summary
+
+# Stabilní strojově zpracovatelný image report
+oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode image \
+  --format json \
+  --changed-only
+
+# Striktní CI gate
+oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode full \
+  --format summary \
+  --fail-on-change
+```
+
+`--format summary` vypíše `MATCH` nebo `DIFFERENT` s počty. JSON navíc obsahuje `mode`, `matched_by` a boolean `match`. `--changed-only` filtruje pouze detailní řádky tabulky a JSON; souhrny vždy obsahují počty za celé porovnání.
+
+Statusy v tabulce používají při výstupu do terminálu barvy ve stylu git diffu: `added` zeleně, `removed` červeně, `changed` žlutě a `same` tlumeně. Chování řídí `--color auto|always|never`; JSON nikdy neobsahuje ANSI escape sekvence a proměnná `NO_COLOR` automatické barvy vypne.
+
+### release verify
+
+Bez Kubernetes parametrů kontroluje `release verify` registry. Každý neměnný `image@digest` musí existovat a každý primární release tag zapsaný v manifestu musí stále ukazovat na tento digest:
+
+```bash
+oci-toolbox release verify releases/current.yml --progress
+
+oci-toolbox release verify releases/current.yml \
+  --creds "$REGISTRY_USER:$REGISTRY_PASS" \
+  --insecure \
+  --format json
+```
+
+Pohyblivé aliasy z `extra_tags`, například `stable`, se záměrně nekontrolují, protože po vydání novějšího release mohou legitimně ukazovat jinam.
+
+S parametrem `--namespace` se manifest ověří proti běžným containerům Kubernetes Deploymentů. Aktuální image reference se přes registry přeloží na digest a porovnají podle `app_name/container_name`, repository, digestu a platformy, pokud je v manifestu uvedena. Chybějící a neočekávané selectory se hlásí jako drift. Rozdíl pouze v tagu se zaznamená jako `tag_changed`, ale shodný neměnný obsah zůstane ověřený.
+
+```bash
+oci-toolbox release verify releases/current.yml \
+  --namespace example \
+  --image-prefix registry.example.com/team \
+  --kube-insecure \
+  --insecure \
+  --format json
+```
+
+Oba režimy vypíší úplný report a při nalezení driftu nebo chybě kontroly skončí nenulovým exit kódem, takže není potřeba další CI gate flag. Kubernetes TLS a registry TLS se řídí nezávisle pomocí `--kube-insecure` a `--insecure`.
+
+Výchozí tabulka je záměrně kompaktní: u ověřených položek vypíše pouze status a selector, zatímco sloupec `DETAILS` se používá pro drift, chybu nebo rozdíl tagu. Úplné expected/actual hodnoty jsou dostupné přes `--format json`.
 
 ### Údržba registry
 

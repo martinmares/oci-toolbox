@@ -20,6 +20,8 @@
   - [examples](#examples-command)
   - [bundle](#bundle)
   - [release reconstruct](#release-reconstruct)
+  - [release selectors and compare](#release-selectors-and-compare)
+  - [release verify](#release-verify)
   - [registry maintenance](#registry-maintenance)
   - [Kubernetes image snapshots](#kubernetes-image-snapshots)
 - [Git release repository](#git-release-repository)
@@ -563,7 +565,48 @@ oci-toolbox bundle publish bundle.yml \
 
 `bundle publish` preflights all images before copying. A missing primary release tag is created, the same existing digest is treated as an idempotent retry, and an existing tag with another digest aborts the operation. Extra tags such as `stable` are movable aliases. The output file must not already exist. Git commit, tag, and push operations deliberately remain the responsibility of CI or the caller.
 
-The initial bundle implementation supports only single-platform `linux/amd64` image manifests. OCI indexes and other platforms are rejected explicitly.
+#### Selective release from a base manifest
+
+To publish only named application containers while carrying every other digest forward from an existing release, pass the previous manifest and repeat `--select` with the deployment identity `app_name/container_name`:
+
+```bash
+oci-toolbox bundle publish bundles/stable.yml \
+  --base-release releases/RE_2026.08.01.01.yml \
+  --release-id RE_2026.08.03.01 \
+  --select zis-aq-bridge/application \
+  --select zis-es-idx-view/application \
+  --output releases/RE_2026.08.03.01.yml \
+  --progress
+```
+
+For a longer list, use a strict YAML selection file:
+
+```yaml
+selectors:
+  - zis-aq-bridge/application
+  - zis-es-idx-view/application
+```
+
+```bash
+oci-toolbox bundle publish bundles/stable.yml \
+  --base-release releases/RE_2026.08.01.01.yml \
+  --release-id RE_2026.08.03.01 \
+  --select-file selected-images.yml \
+  --preserve-base-only \
+  --output releases/RE_2026.08.03.01.yml
+```
+
+The selector is deliberately based on `(app_name, container_name)`, not on a mutable tag or repository name. Selected targets use the current source from the bundle. Unselected targets are read from the base release by immutable digest and retagged with the new `release_id`; their digest therefore cannot change. By default, the base release and bundle must contain the same deployment selectors and target repositories. With `--preserve-base-only`, the base release becomes the authoritative template for the new release: its target list and ordering are preserved, selected blocks are replaced from the bundle, and all other blocks retain their digest. Unselected targets found only in the bundle are ignored. A selected target must exist in both the base release and the bundle, preventing an accidental deployment addition or removal. Missing, duplicate, or malformed selectors and target repository changes for selected entries fail before registry writes start. `--select` and `--select-file` can be combined.
+
+When neither `--dest-registry` nor `registries.target.url` is set, selective publish first uses `registry_base` from the base release. If it is absent, the destination prefix is inferred by matching common deployment selectors and stripping each bundle `target.repository` from its base image. Inference succeeds only when all common targets produce the same prefix; an explicit destination always has precedence.
+
+Source registry credentials are used for selected bundle images. Destination registry credentials are also used as source credentials when reusing unselected images from the previous release.
+
+When a reused base image stays in the same repository, publish creates the new release tag directly through the registry API and transfers no layers. A full pull/push is performed only for selected images or when source and target repositories differ.
+
+With `--progress`, a separate `preflight` progress bar is shown before image transfer. It reports the number of inspected images, the selector currently being checked, and whether the source digest or destination tag is being inspected.
+
+New images selected from the bundle currently support only single-platform `linux/amd64` manifests. Unselected and base-only images reused by immutable digest may also be multi-platform OCI indexes; they are retagged without selecting or modifying a child platform.
 
 ### release reconstruct
 
@@ -618,6 +661,85 @@ oci-toolbox release reconstruct \
 ```
 
 Every image is resolved to its registry digest. Tag discovery is opt-in: `--discover-tags` lists the repository tags, resolves them, and records every tag that points to the same digest. An explicit input tag remains the primary `tag`; for digest inputs, a discovered tag equal to `release_id` is preferred, followed by a single unambiguous matching tag. Other matches are stored in the image's `extra_tags`. Each `--extra-tag` is recorded only after the command verifies that the tag already points to that same digest. Use `--progress` to show the number of inspected images, throughput, and ETA. Single images record their actual `os/architecture`; OCI indexes are locked by the index digest and recorded as `platform: multi-platform`. The manifest-level platform is omitted when the inputs mix platform types.
+
+### release selectors and compare
+
+List the stable `app_name/container_name` identities available for `bundle publish --select`:
+
+```bash
+# Human-readable table with image details
+oci-toolbox release selectors releases/RE_2026.08.03.01.yml
+
+# One selector per line for shell pipelines or a selection file generator
+oci-toolbox release selectors releases/RE_2026.08.03.01.yml --format plain
+
+# Structured output with release_id and image details
+oci-toolbox release selectors releases/RE_2026.08.03.01.yml --format json
+```
+
+Compare two manifests by that identity. The comparison is directional from A to B and reports `same`, `changed`, `added`, and `removed`. Three comparison presets are available:
+
+- `--mode digest` is the default and compares only immutable SHA digests. Use it to compare a release generated by another system with one reconstructed from a cluster.
+- `--mode image` compares repository, digest, and platform. Tags remain informational, so a release-ID-only retag does not change the content status.
+- `--mode full` compares all per-image release data: ID, source, repository, tag, digest, extra tags, and platform. Top-level release ID and creation time are not image identity fields.
+
+Every mode matches rows by `app_name/container_name`; missing and additional selectors are always differences.
+
+```bash
+# Compact digest table (default mode)
+oci-toolbox release compare releases/previous.yml releases/current.yml
+
+# One-line result
+oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode digest \
+  --format summary
+
+# Stable machine-readable image comparison
+oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode image \
+  --format json \
+  --changed-only
+
+# Strict CI gate
+oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode full \
+  --format summary \
+  --fail-on-change
+```
+
+`--format summary` prints `MATCH` or `DIFFERENT` with counts. JSON additionally contains `mode`, `matched_by`, and the boolean `match`. `--changed-only` filters only detailed table and JSON rows; summaries always contain counts for the complete comparison.
+
+Table statuses use git-diff-style colors when stdout is a terminal: `added` is green, `removed` red, `changed` yellow, and `same` dimmed. Control this with `--color auto|always|never`; JSON never contains ANSI escape sequences, and `NO_COLOR` disables automatic coloring.
+
+### release verify
+
+Without Kubernetes options, `release verify` checks the registry. Every immutable `image@digest` must exist and each primary release tag recorded by the manifest must still resolve to that digest:
+
+```bash
+oci-toolbox release verify releases/current.yml --progress
+
+oci-toolbox release verify releases/current.yml \
+  --creds "$REGISTRY_USER:$REGISTRY_PASS" \
+  --insecure \
+  --format json
+```
+
+Mutable aliases from `extra_tags`, such as `stable`, are deliberately not verified because they may legitimately move after a later release.
+
+Pass `--namespace` to verify the manifest against regular containers in Kubernetes Deployments. Live image references are resolved through the registry and compared by `app_name/container_name`, repository, digest, and the manifest platform when specified. Missing and unexpected selectors are reported as drift. A tag-only difference is recorded as `tag_changed`, but identical immutable content remains verified.
+
+```bash
+oci-toolbox release verify releases/current.yml \
+  --namespace example \
+  --image-prefix registry.example.com/team \
+  --kube-insecure \
+  --insecure \
+  --format json
+```
+
+Both modes print a complete report and exit non-zero when drift or an inspection error is found, so no additional CI gating flag is required. Kubernetes and registry TLS are controlled independently by `--kube-insecure` and `--insecure`.
+
+The default table is deliberately compact: verified entries show only their status and selector, while `DETAILS` is used for drift, errors, or tag differences. Complete expected/actual values remain available through `--format json`.
 
 ### registry maintenance
 

@@ -18,6 +18,7 @@ import (
 	"github.com/martinmares/oci-toolbox/internal/auth"
 	"github.com/martinmares/oci-toolbox/internal/bundle"
 	"github.com/martinmares/oci-toolbox/internal/logging"
+	"github.com/martinmares/oci-toolbox/internal/progress"
 )
 
 var bundleOptions struct {
@@ -30,14 +31,18 @@ var bundleOptions struct {
 }
 
 var bundlePublishOptions struct {
-	output         string
-	bundleRevision string
-	srcCreds       string
-	destCreds      string
-	srcInsecure    bool
-	destInsecure   bool
-	progress       bool
-	debug          bool
+	output           string
+	bundleRevision   string
+	srcCreds         string
+	destCreds        string
+	srcInsecure      bool
+	destInsecure     bool
+	progress         bool
+	debug            bool
+	baseRelease      string
+	selectors        []string
+	selectFile       string
+	preserveBaseOnly bool
 }
 
 var bundleCmd = &cobra.Command{
@@ -81,9 +86,20 @@ var bundlePlanCmd = &cobra.Command{
 
 var bundlePublishCmd = &cobra.Command{
 	Use:   "publish FILE",
-	Short: "Publish all bundle images and create an immutable release manifest",
+	Short: "Publish a complete or selective bundle release and create its immutable manifest",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runBundlePublish,
+	Example: `  oci-toolbox bundle publish bundles/stable.yml \
+    --release-id RE_2026.08.03.01 \
+    --output releases/RE_2026.08.03.01.yml
+
+  oci-toolbox bundle publish bundles/stable.yml \
+    --base-release releases/RE_2026.08.01.01.yml \
+    --release-id RE_2026.08.03.01 \
+    --select zis-aq-bridge/application \
+    --select zis-es-idx-view/application \
+    --preserve-base-only \
+    --output releases/RE_2026.08.03.01.yml`,
 }
 
 func init() {
@@ -102,6 +118,10 @@ func init() {
 	bundlePublishCmd.Flags().BoolVar(&bundlePublishOptions.destInsecure, "dest-insecure", false, "skip destination registry TLS verification")
 	bundlePublishCmd.Flags().BoolVar(&bundlePublishOptions.progress, "progress", false, "show copy progress")
 	bundlePublishCmd.Flags().BoolVar(&bundlePublishOptions.debug, "debug", false, "enable verbose output")
+	bundlePublishCmd.Flags().StringVar(&bundlePublishOptions.baseRelease, "base-release", "", "base release manifest whose unselected image digests are reused")
+	bundlePublishCmd.Flags().StringArrayVar(&bundlePublishOptions.selectors, "select", nil, "deployment target to update as APP_NAME/CONTAINER_NAME (repeatable)")
+	bundlePublishCmd.Flags().StringVar(&bundlePublishOptions.selectFile, "select-file", "", "strict YAML file containing a selectors list")
+	bundlePublishCmd.Flags().BoolVar(&bundlePublishOptions.preserveBaseOnly, "preserve-base-only", false, "use the base release as the target template and ignore unselected bundle-only targets")
 
 	bundleCmd.AddCommand(bundleValidateCmd, bundlePlanCmd, bundlePublishCmd)
 	rootCmd.AddCommand(bundleCmd)
@@ -112,10 +132,14 @@ func loadBundlePlan(path string) (*bundle.Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	return resolveBundlePlan(b, bundleOptions.targetRegistry)
+}
+
+func resolveBundlePlan(b *bundle.Bundle, targetRegistry string) (*bundle.Plan, error) {
 	return bundle.Resolve(b, bundle.ResolveOptions{
 		ReleaseID:      bundleOptions.releaseID,
 		SourceRegistry: bundleOptions.sourceRegistry,
-		TargetRegistry: bundleOptions.targetRegistry,
+		TargetRegistry: targetRegistry,
 		SourceProject:  bundleOptions.sourceProject,
 		TargetProject:  bundleOptions.targetProject,
 		ExtraTags:      bundleOptions.extraTags,
@@ -141,24 +165,76 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 	} else {
 		logging.Setup(slog.LevelInfo)
 	}
-	plan, err := loadBundlePlan(args[0])
+	b, err := bundle.Load(args[0])
 	if err != nil {
 		return err
+	}
+	selectors := append([]string(nil), bundlePublishOptions.selectors...)
+	if strings.TrimSpace(bundlePublishOptions.selectFile) != "" {
+		fileSelectors, err := bundle.LoadSelectionFile(bundlePublishOptions.selectFile)
+		if err != nil {
+			return err
+		}
+		selectors = append(selectors, fileSelectors...)
+	}
+	baseReleasePath := strings.TrimSpace(bundlePublishOptions.baseRelease)
+	var baseRelease *bundle.ReleaseManifest
+	targetRegistry := bundleOptions.targetRegistry
+	if baseReleasePath == "" {
+		if len(selectors) > 0 {
+			return errors.New("--select and --select-file require --base-release")
+		}
+		if bundlePublishOptions.preserveBaseOnly {
+			return errors.New("--preserve-base-only requires --base-release")
+		}
+	} else {
+		baseRelease, err = bundle.LoadRelease(baseReleasePath)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(targetRegistry) == "" && strings.TrimSpace(b.Registries.Target.URL) == "" {
+			targetRegistry, err = bundle.InferTargetRegistry(b, baseRelease, bundleOptions.targetProject)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	plan, err := resolveBundlePlan(b, targetRegistry)
+	if err != nil {
+		return err
+	}
+	if baseRelease != nil {
+		plan, err = bundle.ApplyBaseReleaseWithOptions(plan, baseRelease, selectors, bundle.SelectiveOptions{
+			PreserveBaseOnly: bundlePublishOptions.preserveBaseOnly,
+		})
+		if err != nil {
+			return err
+		}
 	}
 	sourceOpts := registryOptions(bundlePublishOptions.srcCreds, bundlePublishOptions.srcInsecure)
 	targetOpts := registryOptions(bundlePublishOptions.destCreds, bundlePublishOptions.destInsecure)
 
 	preflight := make([]publishPreflight, 0, len(plan.Images))
-	for _, item := range plan.Images {
-		sourceDesc, err := fetchImageManifest(item.SourceRef, sourceOpts)
+	var preflightCounter *progress.Counter
+	if bundlePublishOptions.progress {
+		preflightCounter = progress.NewCounter(len(plan.Images), "preflight images", cmd.ErrOrStderr())
+		defer func() {
+			_ = preflightCounter.Exit()
+		}()
+	}
+	for i, item := range plan.Images {
+		selector := item.AppName + "/" + item.ContainerName
+		preflightCounter.Describe(fmt.Sprintf("preflight source %d/%d: %s", i+1, len(plan.Images), selector))
+		itemSourceOpts := sourceOpts
+		if item.FromBaseRelease {
+			itemSourceOpts = targetOpts
+		}
+		sourceDesc, platform, err := fetchBundleImage(item.SourceRef, item.FromBaseRelease, itemSourceOpts)
 		if err != nil {
 			return fmt.Errorf("image %q source: %w", item.ID, err)
 		}
-		platform, err := verifiedPlatform(sourceDesc)
-		if err != nil {
-			return fmt.Errorf("image %q source: %w", item.ID, err)
-		}
-		targetDesc, exists, err := fetchOptionalManifest(item.TargetRef, targetOpts)
+		preflightCounter.Describe(fmt.Sprintf("preflight target %d/%d: %s", i+1, len(plan.Images), selector))
+		targetDesc, exists, err := fetchOptionalBundleImage(item.TargetRef, item.FromBaseRelease, targetOpts)
 		if err != nil {
 			return fmt.Errorf("image %q target preflight: %w", item.ID, err)
 		}
@@ -175,6 +251,23 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 			platform:     platform,
 			targetExists: exists,
 		})
+		if err := preflightCounter.Advance(); err != nil {
+			return fmt.Errorf("updating preflight progress: %w", err)
+		}
+	}
+	if err := preflightCounter.Finish(); err != nil {
+		return fmt.Errorf("finishing preflight progress: %w", err)
+	}
+	preflightCounter = nil
+	releasePlatform := ""
+	if len(preflight) > 0 {
+		releasePlatform = preflight[0].platform
+		for _, item := range preflight[1:] {
+			if item.platform != releasePlatform {
+				releasePlatform = ""
+				break
+			}
+		}
 	}
 
 	copyOpts := copyRunOptions{
@@ -195,7 +288,7 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 		CreatedAt:    time.Now().UTC(),
 		Bundle:       &bundle.ReleaseBundle{Name: plan.Name, Revision: strings.TrimSpace(bundlePublishOptions.bundleRevision)},
 		RegistryBase: registryBase(plan.TargetRegistry, plan.TargetProject),
-		Platform:     "linux/amd64",
+		Platform:     releasePlatform,
 		ExtraTags:    append([]string(nil), plan.ExtraTags...),
 		Images:       make([]bundle.ReleaseImage, 0, len(preflight)),
 	}
@@ -208,14 +301,25 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("image %q extra tags: %w", item.ID, err)
 			}
 			slog.Info("destination already matches source digest", "image", item.ID, "destination", item.TargetRef)
+		} else if item.FromBaseRelease && sameImageRepository(item.SourceImage, item.TargetImage) {
+			tags := append([]string{plan.ReleaseID}, item.ExtraTags...)
+			if err := tagRemoteManifest(item.TargetImage, entry.sourceDigest, tags, targetOpts); err != nil {
+				return fmt.Errorf("retagging reused image %q: %w", item.ID, err)
+			}
+			slog.Info("retagged reused image without transferring layers", "image", item.ID, "destination", item.TargetRef)
 		} else {
 			label := fmt.Sprintf("bundle %d/%d", i+1, len(preflight))
-			if err := runCopyOne(cmd.Context(), "docker://"+sourceDigestRef, "docker://"+item.TargetRef, label, item.ExtraTags, copyOpts); err != nil {
+			itemCopyOpts := copyOpts
+			if item.FromBaseRelease {
+				itemCopyOpts.SrcCreds = bundlePublishOptions.destCreds
+				itemCopyOpts.SrcInsecure = bundlePublishOptions.destInsecure
+			}
+			if err := runCopyOne(cmd.Context(), "docker://"+sourceDigestRef, "docker://"+item.TargetRef, label, item.ExtraTags, itemCopyOpts); err != nil {
 				return fmt.Errorf("publishing image %q: %w", item.ID, err)
 			}
 		}
 
-		targetDesc, err := fetchImageManifest(item.TargetRef, targetOpts)
+		targetDesc, _, err := fetchBundleImage(item.TargetRef, item.FromBaseRelease, targetOpts)
 		if err != nil {
 			return fmt.Errorf("verifying image %q destination: %w", item.ID, err)
 		}
@@ -247,6 +351,50 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "release manifest written to %s\n", bundlePublishOptions.output)
 	return nil
+}
+
+func sameImageRepository(a, b string) bool {
+	normalize := func(value string) string {
+		value = strings.TrimSpace(value)
+		value = strings.TrimPrefix(value, "docker://")
+		return strings.Trim(value, "/")
+	}
+	return normalize(a) == normalize(b)
+}
+
+func fetchBundleImage(refValue string, allowIndex bool, opts []remote.Option) (*remote.Descriptor, string, error) {
+	if !allowIndex {
+		desc, err := fetchImageManifest(refValue, opts)
+		if err != nil {
+			return nil, "", err
+		}
+		platform, err := verifiedPlatform(desc)
+		return desc, platform, err
+	}
+	desc, err := fetchManifestDescriptor(refValue, opts)
+	if err != nil {
+		return nil, "", err
+	}
+	platform, err := reconstructPlatform(desc)
+	return desc, platform, err
+}
+
+func fetchOptionalBundleImage(refValue string, allowIndex bool, opts []remote.Option) (*remote.Descriptor, bool, error) {
+	var desc *remote.Descriptor
+	var err error
+	if allowIndex {
+		desc, err = fetchManifestDescriptor(refValue, opts)
+	} else {
+		desc, err = fetchImageManifest(refValue, opts)
+	}
+	if err == nil {
+		return desc, true, nil
+	}
+	var registryErr *transport.Error
+	if errors.As(err, &registryErr) && registryErr.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	return nil, false, err
 }
 
 func registryOptions(creds string, insecure bool) []remote.Option {
