@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -719,7 +721,6 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 		dstOpts = append(dstOpts, auth.InsecureTransport())
 	}
 
-	// --- setup progress UI ---
 	srcIsDaemon := isDaemonRef(src)
 	srcIsOCIArchive := isOCIArchiveRef(src)
 	srcIsFile := isFileRef(src) || srcIsOCIArchive
@@ -729,6 +730,35 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 	if len(additionalDestTags) > 0 && (isFileDst || dstIsDaemon) {
 		return fmt.Errorf("--dest-tag is supported only for registry destinations")
 	}
+
+	if shouldTryRegistryDigestReuse(srcIsDaemon, srcIsFile, dstIsDaemon, isFileDst, opts) {
+		if opts.Progress {
+			label := "copy"
+			if batchLabel != "" {
+				label = batchLabel
+			}
+			fmt.Fprintf(os.Stderr, "phase: %s: comparing source and destination digests\n", label)
+		}
+		reused, err := tryRegistryDigestReuse(src, dst, additionalDestTags, opts, srcOpts, dstOpts)
+		if err != nil {
+			return err
+		}
+		if reused {
+			if opts.ProgressJSON {
+				emitter := progress.NewJSONEmitter(os.Stdout)
+				emitter.Done("success", "destination already contains source digest; no layers transferred")
+			}
+			slog.Info(
+				"destination already contains source digest; no layers transferred",
+				"job", batchLabel,
+				"source", stripScheme(src),
+				"destination", stripScheme(dst),
+			)
+			return nil
+		}
+	}
+
+	// --- setup progress UI ---
 	var ui *progress.UI
 	var jsonEmitter *progress.JSONEmitter
 	var srcCh, dstCh chan<- v1.Update
@@ -1328,6 +1358,101 @@ func validateShadowEntrypointFlags(wrap, noWrap bool) error {
 		return fmt.Errorf("--wrap-entrypoint and --no-wrap-entrypoint cannot be used together")
 	}
 	return nil
+}
+
+func shouldTryRegistryDigestReuse(srcIsDaemon, srcIsFile, dstIsDaemon, dstIsFile bool, opts copyRunOptions) bool {
+	return !srcIsDaemon && !srcIsFile && !dstIsDaemon && !dstIsFile &&
+		len(opts.RecipePaths) == 0 && !opts.Reduce && !opts.ReduceChanges &&
+		!opts.WrapEntrypoint && !opts.NoWrapEntrypoint && !opts.DestNoReuse
+}
+
+// tryRegistryDigestReuse avoids pulling layers when the exact source manifest
+// already exists in the destination repository. It either leaves an already
+// matching destination tag untouched or applies the requested tags directly to
+// the destination manifest. A false result means a regular copy is required.
+func tryRegistryDigestReuse(src, dst string, additionalDestTags []string, opts copyRunOptions, srcOpts, dstOpts []remote.Option) (bool, error) {
+	srcRef, err := name.ParseReference(stripScheme(src))
+	if err != nil {
+		return false, fmt.Errorf("invalid source reference: %w", err)
+	}
+	dstRef, err := name.ParseReference(stripScheme(dst))
+	if err != nil {
+		return false, fmt.Errorf("invalid destination reference: %w", err)
+	}
+
+	sourceDesc, err := remote.Get(srcRef, srcOpts...)
+	if err != nil {
+		return false, fmt.Errorf("inspecting source manifest: %w", err)
+	}
+	sourceDigest := sourceDesc.Digest.String()
+	if opts.ExpectedDigest != "" && sourceDigest != opts.ExpectedDigest {
+		return false, fmt.Errorf("source image digest %s differs from expected digest %s", sourceDigest, opts.ExpectedDigest)
+	}
+	// Preserve the existing validation for indexes: additional destination tags
+	// are currently supported only for single-platform images.
+	if sourceDesc.MediaType.IsIndex() && len(additionalDestTags) > 0 {
+		return false, nil
+	}
+
+	destinationDesc, destinationErr := remote.Get(dstRef, dstOpts...)
+	if destinationErr == nil && destinationDesc.Digest.String() == sourceDigest {
+		if err := tagExistingDestinationManifest(dstRef, destinationDesc, additionalDestTags, dstOpts); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if destinationErr != nil && !isRegistryManifestNotFound(destinationErr) {
+		return false, fmt.Errorf("inspecting destination manifest: %w", destinationErr)
+	}
+
+	dstTag, ok := dstRef.(name.Tag)
+	if !ok {
+		return false, nil
+	}
+	digestRef := dstTag.Context().Digest(sourceDigest)
+	digestDesc, err := remote.Get(digestRef, dstOpts...)
+	if err != nil {
+		if isRegistryManifestNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking destination repository for digest %s: %w", sourceDigest, err)
+	}
+	if digestDesc.Digest.String() != sourceDigest {
+		return false, fmt.Errorf("destination digest lookup returned %s, expected %s", digestDesc.Digest, sourceDigest)
+	}
+	if err := remote.Tag(dstTag, digestDesc, dstOpts...); err != nil {
+		return false, fmt.Errorf("tagging existing destination manifest as %s: %w", dstTag, err)
+	}
+	if err := tagExistingDestinationManifest(dstTag, digestDesc, additionalDestTags, dstOpts); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func tagExistingDestinationManifest(dst name.Reference, desc *remote.Descriptor, tags []string, opts []remote.Option) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	dstTag, ok := dst.(name.Tag)
+	if !ok {
+		return fmt.Errorf("--dest-tag requires destination reference to be a tag")
+	}
+	for _, tag := range normalizeAdditionalTags(tags) {
+		target, err := name.NewTag(dstTag.Context().Name()+":"+tag, name.WeakValidation)
+		if err != nil {
+			return fmt.Errorf("invalid additional destination tag %q: %w", tag, err)
+		}
+		if err := remote.Tag(target, desc, opts...); err != nil {
+			return fmt.Errorf("tagging additional destination %s: %w", target, err)
+		}
+		slog.Info("tagged additional destination", "destination", target.String())
+	}
+	return nil
+}
+
+func isRegistryManifestNotFound(err error) bool {
+	var registryErr *transport.Error
+	return errors.As(err, &registryErr) && registryErr.StatusCode == http.StatusNotFound
 }
 
 func tagAdditionalDestTags(dst name.Reference, img v1.Image, opts []remote.Option, tags []string, setPhase func(string), jsonEmitter *progress.JSONEmitter) error {

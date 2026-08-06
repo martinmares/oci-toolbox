@@ -151,6 +151,8 @@ oci-toolbox copy [flags] SOURCE DESTINATION
 
 Copies an image from SOURCE to DESTINATION, applying any specified recipes in order.
 
+For a plain registry-to-registry copy without recipes, layer reduction, entrypoint wrapping, or `--dest-no-reuse`, manifest digests are compared before layers are downloaded. If the destination tag already resolves to the source digest, no layers are transferred. If the destination tag is missing or differs but the same digest already exists under another tag in the destination repository, only the requested tag is created through the registry API. Layer pull/push starts only when the destination repository does not contain the source digest.
+
 **Flags:**
 
 | Flag | Description |

@@ -151,6 +151,8 @@ oci-toolbox copy [flagy] ZDROJ CÍL
 
 Zkopíruje image ze ZDROJE do CÍLE a v pořadí aplikuje všechny zadané recipe.
 
+U čisté kopie registry→registry bez recipe, redukce vrstev, entrypoint wrappingu a `--dest-no-reuse` se před stahováním porovnají manifest digesty. Pokud cílový tag už ukazuje na stejný digest, nepřenášejí se žádné vrstvy. Pokud cílový tag chybí nebo ukazuje jinam, ale stejný digest už existuje v cílovém repository pod jiným tagem, vytvoří se pouze požadovaný tag přes registry API. Pull/push vrstev začne až tehdy, když cílové repository zdrojový digest skutečně neobsahuje.
+
 **Flagy:**
 
 | Flag | Popis |
