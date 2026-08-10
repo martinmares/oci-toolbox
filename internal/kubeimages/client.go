@@ -25,6 +25,7 @@ type DeploymentImage struct {
 	AppName       string
 	ContainerName string
 	Image         string
+	ScaledToZero  bool
 }
 
 func New(opts Options) (*Client, error) {
@@ -77,6 +78,7 @@ func (c *Client) ListDeploymentImages(ctx context.Context, namespace string) ([]
 	}
 	images := make([]DeploymentImage, 0)
 	for _, deployment := range deployments.Items {
+		scaledToZero := deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0
 		for _, container := range deployment.Spec.Template.Spec.Containers {
 			if container.Image == "" {
 				continue
@@ -85,6 +87,7 @@ func (c *Client) ListDeploymentImages(ctx context.Context, namespace string) ([]
 				AppName:       deployment.Name,
 				ContainerName: container.Name,
 				Image:         container.Image,
+				ScaledToZero:  scaledToZero,
 			})
 		}
 	}

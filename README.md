@@ -631,6 +631,7 @@ For an initial manifest reconstructed from an existing Kubernetes environment, r
 oci-toolbox release reconstruct \
   --namespace example \
   --image-prefix registry.example.com/team \
+  --exclude-scaled-to-zero \
   --release-id RE_2026.07.28.01 \
   --kube-insecure \
   --insecure \
@@ -639,7 +640,7 @@ oci-toolbox release reconstruct \
   --progress
 ```
 
-This mode records `app_name` from the Deployment name and `container_name` from each regular container in its pod template. It preserves repeated use of the same image under different selectors. Init containers are not included. Use `--image-prefix` to exclude platform and operator images outside the selected registry or repository path before registry inspection starts. The result describes the current namespace topology; positional images, `--file`, and `--namespace` are mutually exclusive. Use `--kubeconfig` and `--context` when the default kubeconfig selection is not sufficient. Kubernetes TLS and registry TLS are controlled separately by `--kube-insecure` and `--insecure`.
+This mode records `app_name` from the Deployment name and `container_name` from each regular container in its pod template. It preserves repeated use of the same image under different selectors. Init containers are not included. Use `--image-prefix` to exclude platform and operator images outside the selected registry or repository path before registry inspection starts. `--exclude-scaled-to-zero` omits Deployments with an explicit `spec.replicas: 0`; Deployments requesting at least one replica remain included even when they currently have no ready pod. The result describes the current namespace topology; positional images, `--file`, and `--namespace` are mutually exclusive. Use `--kubeconfig` and `--context` when the default kubeconfig selection is not sufficient. Kubernetes TLS and registry TLS are controlled separately by `--kube-insecure` and `--insecure`.
 
 Use a strict YAML input when deployment selectors differ from repository names:
 

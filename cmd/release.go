@@ -24,19 +24,20 @@ import (
 )
 
 type releaseReconstructOptions struct {
-	file         string
-	output       string
-	releaseID    string
-	creds        string
-	insecure     bool
-	progress     bool
-	discoverTags bool
-	extraTags    []string
-	namespace    string
-	kubeconfig   string
-	kubeContext  string
-	kubeInsecure bool
-	imagePrefix  string
+	file                string
+	output              string
+	releaseID           string
+	creds               string
+	insecure            bool
+	progress            bool
+	discoverTags        bool
+	extraTags           []string
+	namespace           string
+	kubeconfig          string
+	kubeContext         string
+	kubeInsecure        bool
+	imagePrefix         string
+	excludeScaledToZero bool
 }
 
 var reconstructOptions releaseReconstructOptions
@@ -69,6 +70,7 @@ var releaseReconstructCmd = &cobra.Command{
 	Example: `  oci-toolbox release reconstruct \
     --namespace example \
     --image-prefix registry.example.com/team \
+    --exclude-scaled-to-zero \
     --release-id RE_2026.07.07.01 \
     --output release.yml \
     --discover-tags \
@@ -120,6 +122,7 @@ func init() {
 	releaseReconstructCmd.Flags().StringVar(&reconstructOptions.kubeContext, "context", "", "Kubernetes context override")
 	releaseReconstructCmd.Flags().BoolVar(&reconstructOptions.kubeInsecure, "kube-insecure", false, "skip Kubernetes API TLS certificate verification")
 	releaseReconstructCmd.Flags().StringVar(&reconstructOptions.imagePrefix, "image-prefix", "", "include only Kubernetes images under this registry/repository prefix")
+	releaseReconstructCmd.Flags().BoolVar(&reconstructOptions.excludeScaledToZero, "exclude-scaled-to-zero", false, "exclude Deployments with spec.replicas=0 (requires --namespace)")
 	releaseSelectorsCmd.Flags().StringVar(&selectorsOptions.format, "format", "table", "output format: table, plain, or json")
 	releaseCompareCmd.Flags().StringVar(&compareOptions.mode, "mode", "digest", "comparison mode: digest, image, or full")
 	releaseCompareCmd.Flags().StringVar(&compareOptions.format, "format", "table", "output format: table, summary, or json")
@@ -707,8 +710,8 @@ func loadReconstructItems(
 ) ([]bundle.ReconstructImage, error) {
 	namespace := strings.TrimSpace(opts.namespace)
 	if namespace == "" {
-		if opts.kubeconfig != "" || opts.kubeContext != "" || opts.kubeInsecure || strings.TrimSpace(opts.imagePrefix) != "" {
-			return nil, errors.New("--kubeconfig, --context, --kube-insecure, and --image-prefix require --namespace")
+		if opts.kubeconfig != "" || opts.kubeContext != "" || opts.kubeInsecure || strings.TrimSpace(opts.imagePrefix) != "" || opts.excludeScaledToZero {
+			return nil, errors.New("--kubeconfig, --context, --kube-insecure, --image-prefix, and --exclude-scaled-to-zero require --namespace")
 		}
 		return reconstructItems(args, opts.file)
 	}
@@ -730,6 +733,12 @@ func loadReconstructItems(
 	if len(images) == 0 {
 		return nil, fmt.Errorf("namespace %q contains no deployment container images", namespace)
 	}
+	if opts.excludeScaledToZero {
+		images = excludeScaledToZeroDeploymentImages(images)
+		if len(images) == 0 {
+			return nil, fmt.Errorf("namespace %q contains no deployment container images after excluding Deployments with spec.replicas=0", namespace)
+		}
+	}
 	if prefix := normalizeImagePrefix(opts.imagePrefix); prefix != "" {
 		images = filterDeploymentImages(images, prefix)
 		if len(images) == 0 {
@@ -741,6 +750,16 @@ func loadReconstructItems(
 		}
 	}
 	return reconstructDeploymentItems(images), nil
+}
+
+func excludeScaledToZeroDeploymentImages(images []kubeimages.DeploymentImage) []kubeimages.DeploymentImage {
+	filtered := make([]kubeimages.DeploymentImage, 0, len(images))
+	for _, image := range images {
+		if !image.ScaledToZero {
+			filtered = append(filtered, image)
+		}
+	}
+	return filtered
 }
 
 func normalizeImagePrefix(value string) string {

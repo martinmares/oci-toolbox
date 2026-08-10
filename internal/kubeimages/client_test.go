@@ -69,3 +69,30 @@ func TestListDeploymentImagesPreservesSelectorsAndRepeatedImages(t *testing.T) {
 		}
 	}
 }
+
+func TestListDeploymentImagesMarksDeploymentsScaledToZero(t *testing.T) {
+	zero := int32(0)
+	one := int32(1)
+	client := &Client{client: fake.NewSimpleClientset(
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "disabled", Namespace: "example"},
+			Spec: appsv1.DeploymentSpec{Replicas: &zero, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "application", Image: "registry.example.com/team/missing:1"}},
+			}}},
+		},
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "active", Namespace: "example"},
+			Spec: appsv1.DeploymentSpec{Replicas: &one, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "application", Image: "registry.example.com/team/active:1"}},
+			}}},
+		},
+	).AppsV1()}
+
+	images, err := client.ListDeploymentImages(context.Background(), "example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 2 || images[0].AppName != "active" || images[0].ScaledToZero || images[1].AppName != "disabled" || !images[1].ScaledToZero {
+		t.Fatalf("images = %#v", images)
+	}
+}

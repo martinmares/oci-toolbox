@@ -109,6 +109,7 @@ oci-toolbox bundle publish bundle.yml \
 oci-toolbox release reconstruct \
   --namespace example \
   --image-prefix registry.example.com/team \
+  --exclude-scaled-to-zero \
   --release-id RE_2026.07.28.01 \
   --kube-insecure \
   --insecure \

@@ -54,6 +54,13 @@ func TestLoadReconstructItemsRequiresNamespaceForKubernetesOptions(t *testing.T)
 	}
 }
 
+func TestLoadReconstructItemsRequiresNamespaceForExcludeScaledToZero(t *testing.T) {
+	_, err := loadReconstructItems(t.Context(), nil, releaseReconstructOptions{excludeScaledToZero: true})
+	if err == nil || !strings.Contains(err.Error(), "--exclude-scaled-to-zero require --namespace") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestFilterDeploymentImagesByRepositoryPrefix(t *testing.T) {
 	images := []kubeimages.DeploymentImage{
 		{AppName: "api", ContainerName: "api", Image: "registry.example.com/team/api:1"},
@@ -62,6 +69,18 @@ func TestFilterDeploymentImagesByRepositoryPrefix(t *testing.T) {
 		{AppName: "external", ContainerName: "external", Image: "other.example.com/team/external:1"},
 	}
 	filtered := filterDeploymentImages(images, normalizeImagePrefix("https://registry.example.com/team/"))
+	if len(filtered) != 2 || filtered[0].AppName != "api" || filtered[1].AppName != "worker" {
+		t.Fatalf("filtered = %#v", filtered)
+	}
+}
+
+func TestExcludeScaledToZeroDeploymentImages(t *testing.T) {
+	images := []kubeimages.DeploymentImage{
+		{AppName: "api", ContainerName: "api", Image: "registry.example.com/api:1"},
+		{AppName: "disabled", ContainerName: "application", Image: "registry.example.com/missing:1", ScaledToZero: true},
+		{AppName: "worker", ContainerName: "worker", Image: "registry.example.com/worker:1"},
+	}
+	filtered := excludeScaledToZeroDeploymentImages(images)
 	if len(filtered) != 2 || filtered[0].AppName != "api" || filtered[1].AppName != "worker" {
 		t.Fatalf("filtered = %#v", filtered)
 	}

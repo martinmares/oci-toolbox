@@ -631,6 +631,7 @@ Pro inicializační manifest rekonstruovaný z existujícího Kubernetes prostř
 oci-toolbox release reconstruct \
   --namespace example \
   --image-prefix registry.example.com/team \
+  --exclude-scaled-to-zero \
   --release-id RE_2026.07.28.01 \
   --kube-insecure \
   --insecure \
@@ -639,7 +640,7 @@ oci-toolbox release reconstruct \
   --progress
 ```
 
-Tento režim zapíše do `app_name` název Deploymentu a do `container_name` název každého běžného containeru z jeho pod template. Stejnou image použitou pod různými selektory zachová vícekrát. Init containery nezahrnuje. Pomocí `--image-prefix` lze ještě před zahájením kontroly registry vyřadit platformní a operátorové images mimo vybranou registry nebo repository cestu. Výsledek popisuje aktuální topologii namespace; poziční images, `--file` a `--namespace` se vzájemně vylučují. Pokud nestačí výchozí kubeconfig, použij `--kubeconfig` a `--context`. Kubernetes TLS a registry TLS se řídí odděleně pomocí `--kube-insecure` a `--insecure`.
+Tento režim zapíše do `app_name` název Deploymentu a do `container_name` název každého běžného containeru z jeho pod template. Stejnou image použitou pod různými selektory zachová vícekrát. Init containery nezahrnuje. Pomocí `--image-prefix` lze ještě před zahájením kontroly registry vyřadit platformní a operátorové images mimo vybranou registry nebo repository cestu. `--exclude-scaled-to-zero` vynechá Deploymenty s explicitním `spec.replicas: 0`; deploymenty požadující alespoň jednu repliku zůstanou zahrnuté, i když právě nemají ready pod. Výsledek popisuje aktuální topologii namespace; poziční images, `--file` a `--namespace` se vzájemně vylučují. Pokud nestačí výchozí kubeconfig, použij `--kubeconfig` a `--context`. Kubernetes TLS a registry TLS se řídí odděleně pomocí `--kube-insecure` a `--insecure`.
 
 Pokud se deployment selektory liší od názvů repository, použij striktní YAML vstup:
 
