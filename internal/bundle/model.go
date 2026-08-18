@@ -123,6 +123,14 @@ func Decode(r io.Reader) (*Bundle, error) {
 	return &b, nil
 }
 
+// Encode writes a bundle as a single, consistently indented YAML document.
+func Encode(w io.Writer, b *Bundle) error {
+	enc := yaml.NewEncoder(w)
+	enc.SetIndent(2)
+	defer enc.Close()
+	return enc.Encode(b)
+}
+
 func (b *Bundle) Validate() error {
 	if err := requiredText("name", b.Name); err != nil {
 		return err

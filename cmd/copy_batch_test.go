@@ -33,6 +33,22 @@ copy:
 	}
 }
 
+func TestCopyArgsAllowsBatchOutput(t *testing.T) {
+	oldBatchFile, oldReleaseManifest := batchFile, releaseManifest
+	oldOutput, oldReleaseID := copyOutput, copyReleaseID
+	defer func() {
+		batchFile, releaseManifest = oldBatchFile, oldReleaseManifest
+		copyOutput, copyReleaseID = oldOutput, oldReleaseID
+	}()
+	batchFile = "images.yml"
+	releaseManifest = ""
+	copyOutput = "release.yml"
+	copyReleaseID = "RE_2026.08.10.01"
+	if err := copyArgs(nil, nil); err != nil {
+		t.Fatalf("batch output rejected: %v", err)
+	}
+}
+
 func TestLoadCopyBatchAcceptsSourceAlias(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
@@ -65,6 +81,43 @@ copy:
 	}
 	if got := strings.Join(items[0].DestTags, ","); got != "latest,stable" {
 		t.Fatalf("DestTags = %q, want latest,stable", got)
+	}
+}
+
+func TestPrepareBatchReleaseManifestInfersCommonDestinationTag(t *testing.T) {
+	batch := []copyBatchItem{
+		{Src: "source.example.com/team/api:build", Dest: "target.example.com/releases/api:2.4"},
+		{Src: "source.example.com/team/config:build", Dest: "target.example.com/releases/config-form:2.4", ID: "config", AppName: "config", ContainerName: "application", DestTags: []string{"stable"}},
+	}
+	manifest, err := prepareBatchReleaseManifest(batch, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ReleaseID != "2.4" || manifest.RegistryBase != "target.example.com/releases" || len(manifest.Images) != 2 {
+		t.Fatalf("manifest = %#v", manifest)
+	}
+	if got := manifest.Images[0]; got.ID != "api" || got.AppName != "api" || got.ContainerName != "api" || got.Image != "target.example.com/releases/api" || got.Tag != "2.4" {
+		t.Fatalf("inferred image = %#v", got)
+	}
+	if got := manifest.Images[1]; got.ID != "config" || got.AppName != "config" || got.ContainerName != "application" || strings.Join(got.ExtraTags, ",") != "stable" {
+		t.Fatalf("explicit image metadata = %#v", got)
+	}
+}
+
+func TestPrepareBatchReleaseManifestRequiresReleaseIDForMixedTags(t *testing.T) {
+	batch := []copyBatchItem{
+		{Src: "source.example.com/api:build", Dest: "target.example.com/api:2.4"},
+		{Src: "source.example.com/ui:build", Dest: "target.example.com/ui:3.0"},
+	}
+	if _, err := prepareBatchReleaseManifest(batch, ""); err == nil || !strings.Contains(err.Error(), "--release-id is required") {
+		t.Fatalf("error = %v", err)
+	}
+	manifest, err := prepareBatchReleaseManifest(batch, "RE_2026.08.10.01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ReleaseID != "RE_2026.08.10.01" {
+		t.Fatalf("release ID = %q", manifest.ReleaseID)
 	}
 }
 
@@ -208,7 +261,7 @@ images:
 	}
 }
 
-func TestLoadReleaseCopyPlanRequiresSourcePrefixWithoutRegistryBase(t *testing.T) {
+func TestLoadReleaseCopyPlanRequiresSourceBaseWithoutRegistryBase(t *testing.T) {
 	path := writeReleaseFile(t, `
 release_id: release-1
 images:
@@ -218,12 +271,12 @@ images:
 `)
 
 	_, err := loadReleaseCopyPlan(path, "", "mirror.example.com/release")
-	if err == nil || !strings.Contains(err.Error(), "--src-prefix is required") {
+	if err == nil || !strings.Contains(err.Error(), "--src-base is required") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestLoadReleaseCopyPlanRejectsImageOutsideSourcePrefix(t *testing.T) {
+func TestLoadReleaseCopyPlanRejectsImageOutsideSourceBase(t *testing.T) {
 	path := writeReleaseFile(t, `
 release_id: release-1
 images:
@@ -237,8 +290,26 @@ images:
 		"https://registry.example.com/release/",
 		"docker://mirror.example.com/release/",
 	)
-	if err == nil || !strings.Contains(err.Error(), "outside source prefix") {
+	if err == nil || !strings.Contains(err.Error(), "outside source base") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCopyArgsExplainsRenamedBaseFlags(t *testing.T) {
+	oldSrc, oldDest := legacySrcPrefix, legacyDestPrefix
+	defer func() { legacySrcPrefix, legacyDestPrefix = oldSrc, oldDest }()
+
+	legacySrcPrefix = "registry.example.com/source"
+	legacyDestPrefix = ""
+	err := copyArgs(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "--src-prefix was renamed to --src-base") {
+		t.Fatalf("source rename error = %v", err)
+	}
+
+	legacyDestPrefix = "registry.example.com/destination"
+	err = copyArgs(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "--src-prefix and --dest-prefix were renamed to --src-base and --dest-base") {
+		t.Fatalf("combined rename error = %v", err)
 	}
 }
 

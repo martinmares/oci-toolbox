@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/spf13/cobra"
 
 	"github.com/martinmares/oci-toolbox/internal/testutil"
 )
@@ -101,6 +102,30 @@ func TestRegistryCopyReusesDestinationDigestWithoutPullingLayers(t *testing.T) {
 		if desc.Digest.String() != digest.String() {
 			t.Fatalf("%s digest = %s, want %s", ref, desc.Digest, digest)
 		}
+	}
+
+	batch := []copyBatchItem{{
+		Src: sourceURL.Host + "/team/app:build", Dest: destination,
+		ID: "application", AppName: "service", ContainerName: "application", DestTags: []string{"stable"},
+	}}
+	manifest, err := prepareBatchReleaseManifest(batch, "RE_2026.08.10.01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousSrcInsecure, previousDestInsecure, previousProgress := srcInsecure, destInsecure, showProgress
+	srcInsecure, destInsecure, showProgress = true, true, true
+	t.Cleanup(func() {
+		srcInsecure, destInsecure, showProgress = previousSrcInsecure, previousDestInsecure, previousProgress
+	})
+	if err := resolveBatchReleaseManifest(&cobra.Command{}, manifest, batch); err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	got := manifest.Images[0]
+	if manifest.ReleaseID != "RE_2026.08.10.01" || got.Digest != digest.String() || got.Source == nil || got.Source.Digest != digest.String() || got.Platform != "linux/amd64" {
+		t.Fatalf("resolved manifest = %#v", manifest)
 	}
 }
 

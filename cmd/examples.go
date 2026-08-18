@@ -31,6 +31,12 @@ oci-toolbox copy docker://registry.example.com/team/app:1.2 docker://registry.ex
 	codeBlock(w, `# Copy every image listed in images.yml. Both registries use an insecure TLS connection.
 oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure`, color)
 	fmt.Fprintln(w)
+	codeBlock(w, `# Copy the batch and record actual destination digests in a release manifest.
+oci-toolbox copy --batch-file images.yml \
+  --release-id RE_2026.08.10.01 \
+  --output releases/RE_2026.08.10.01-dev.yml \
+  --src-insecure --dest-insecure --progress`, color)
+	fmt.Fprintln(w)
 	codeBlock(w, `# images.yml
 copy:
   - src: registry.example.com/team/config:release-1.0
@@ -42,8 +48,8 @@ copy:
 	codeBlock(w, `# Copy every digest-locked image in a release to another registry path.
 oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
-  --src-prefix quay.example.com/nac-test \
-  --dest-prefix artifactory.example.com/nac-test \
+  --src-base quay.example.com/nac-test \
+  --dest-base artifactory.example.com/nac-test \
   --output releases/2026.06.25.01-replica.yml \
   --src-insecure \
   --dest-insecure \
@@ -137,6 +143,18 @@ oci-toolbox release reconstruct \
   --file release-images.yml \
   --release-id RE_2026.07.28.01 \
   --output releases/RE_2026.07.28.01.yml`, color)
+
+	section(w, "Convert a release manifest to a bundle", color)
+	codeBlock(w, `# Preserve the exact source content with immutable digests (default).
+oci-toolbox release to-bundle releases/RE_2026.08.10.01.yml \
+  --name tsm-sda-2.4 \
+  --output bundles/tsm-sda-2.4.yml
+
+# Use the recorded source tags instead to create a reusable, mutable bundle.
+oci-toolbox release to-bundle releases/RE_2026.08.10.01.yml \
+  --name tsm-sda-2.4 \
+  --source-mode tag \
+  --output bundles/tsm-sda-2.4-tags.yml`, color)
 
 	section(w, "Inspect, compare, and verify releases", color)
 	codeBlock(w, `# List deployment selectors for selective publishing.

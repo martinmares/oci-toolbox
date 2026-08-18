@@ -19,6 +19,7 @@
   - [tree](#tree)
   - [Příkaz examples](#příkaz-examples)
   - [bundle](#bundle)
+  - [release to-bundle](#release-to-bundle)
   - [release reconstruct](#release-reconstruct)
   - [release selectors a compare](#release-selectors-a-compare)
   - [release verify](#release-verify)
@@ -163,9 +164,10 @@ U čisté kopie registry→registry bez recipe, redukce vrstev, entrypoint wrapp
 | `--debug` | Zapne podrobný výstup |
 | `--batch-file cesta/k/images.yml` | Spustí více copy jobů ze YAML souboru |
 | `--release-manifest cesta/k/release.yml` | Zkopíruje všechny image uzamčené digestem z release manifestu |
-| `--src-prefix registry/cesta` | Zdrojový prefix nahrazený v release-manifest režimu; výchozí je `registry_base` |
-| `--dest-prefix registry/cesta` | Povinný cílový prefix v release-manifest režimu |
+| `--src-base registry/cesta` | Zdrojový registry/repository základ nahrazený v release-manifest režimu; výchozí je `registry_base` |
+| `--dest-base registry/cesta` | Povinný cílový registry/repository základ v release-manifest režimu |
 | `--output cesta/k/release.yml` | Zapíše release manifest pro zkopírované cílové image |
+| `--release-id ID` | Release ID pro výstup z `--batch-file`; bez něj se odvodí ze společného cílového tagu |
 | `--retries počet` | Dodatečné pokusy při přechodných síťových chybách; výchozí `4`, hodnota `0` retry vypne |
 | `--retry-initial-delay doba` | Prodleva před prvním retry; výchozí `2s` |
 | `--retry-max-delay doba` | Maximální exponenciální prodleva; výchozí `30s` |
@@ -240,6 +242,9 @@ Pro opakované kopírování více image můžeš použít `--batch-file`. Stejn
 copy:
   - src: registry.example.com/team/config:release-1.0
     dest: registry.example.com/team/config:test-latest
+    id: config
+    app_name: config-service
+    container_name: application
     dest_tags:
       - latest
       - stable
@@ -250,6 +255,8 @@ copy:
 ```bash
 oci-toolbox copy \
   --batch-file images.yml \
+  --release-id RE_2026.08.10.01 \
+  --output releases/RE_2026.08.10.01-dev.yml \
   --src-insecure \
   --dest-insecure \
   --retries 5 \
@@ -260,7 +267,9 @@ oci-toolbox copy \
 
 Batch běží sériově. Bez `--continue-on-error` se zastaví na první chybě. S `--continue-on-error` pokračuje dalšími položkami, ale pokud aspoň jedna položka selže, příkaz na konci vrátí nenulový exit code a vypíše souhrn selhání.
 
-Primární klíče v batch souboru jsou `src` a `dest`, stejně jako CLI flagy `--src-*` a `--dest-*`. Jako aliasy jsou podporované i `source` a `destination`. `dest_tags` přidá další tagy ve stejném cílovém repository po jednom zkopírování image, stejně jako opakované `--dest-tag` u jednoho CLI příkazu. Duplicitní cílové image jsou odmítnuté při validaci souboru.
+Primární klíče v batch souboru jsou `src` a `dest`, stejně jako CLI flagy `--src-*` a `--dest-*`. Jako aliasy jsou podporované i `source` a `destination`. `dest_tags` přidá další tagy ve stejném cílovém repository po jednom zkopírování image, stejně jako opakované `--dest-tag` u jednoho CLI příkazu. Volitelné hodnoty `id`, `app_name` a `container_name` určují deployment identitu ve výstupním release manifestu; pokud chybějí, odvodí se z názvu cílového repository. Duplicitní cílové image, ID a selectory jsou odmítnuté při validaci souboru.
+
+Kombinace `--batch-file` a `--output` po úspěšném dokončení všech kopií znovu načte cílové manifesty z registry a zapíše jejich skutečné digesty, tagy a platformy. Zdrojová reference a její digest se zaznamenají do `source`. `--release-id` je volitelný pouze tehdy, když všechny cíle používají stejný tag; v takovém případě se tento tag použije jako release ID. Výstup se zapisuje atomicky a existující soubor se nepřepíše.
 
 ### Kopírování release manifestu
 
@@ -269,8 +278,8 @@ Pomocí `--release-manifest` lze zkopírovat neměnný release do jiné registry
 ```bash
 oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
-  --src-prefix quay.example.com/nac-test \
-  --dest-prefix artifactory.example.com/nac-test \
+  --src-base quay.example.com/nac-test \
+  --dest-base artifactory.example.com/nac-test \
   --output releases/2026.06.25.01-replica.yml \
   --src-insecure \
   --dest-insecure \
@@ -280,7 +289,7 @@ oci-toolbox copy \
   --progress
 ```
 
-Každý zdroj používá `image@digest` z manifestu. Zdrojový prefix se nahradí hodnotou `--dest-prefix`, zbývající repository cesta se zachová a každý cíl dostane jako tag hodnotu `release_id`. Pokud není zadán `--src-prefix`, použije se `registry_base` z manifestu; pokud není dostupné ani jedno, příkaz skončí před kopírováním. Image mimo zdrojový prefix a duplicitní cíle jsou odmítnuty. Hodnoty `tag` a `extra_tags` z manifestu se záměrně nekopírují.
+Každý zdroj používá `image@digest` z manifestu. Zdrojový základ se nahradí hodnotou `--dest-base`, zbývající repository cesta se zachová a každý cíl dostane jako tag hodnotu `release_id`. Pokud není zadán `--src-base`, použije se `registry_base` z manifestu; pokud není dostupné ani jedno, příkaz skončí před kopírováním. Image mimo zdrojový základ a duplicitní cíle jsou odmítnuty. Hodnoty `tag` a `extra_tags` z manifestu se záměrně nekopírují. Původní flagy `--src-prefix` a `--dest-prefix` byly přejmenovány; jejich použití skončí chybou, která odkáže na `--src-base`, respektive `--dest-base`.
 
 `--release-manifest`, `--batch-file` a poziční `SOURCE DESTINATION` jsou samostatné vstupní režimy. Credentials, TLS nastavení, progress, debug výstup a `--continue-on-error` se aplikují na každý vygenerovaný copy job.
 
@@ -609,6 +618,32 @@ Pokud převzatá base image zůstává ve stejné repository, publish vytvoří 
 S `--progress` se před samotným přenosem zobrazuje samostatný `preflight` progress bar. Ukazuje počet zkontrolovaných images, právě ověřovaný selector a zda se kontroluje source digest nebo cílový tag.
 
 Nové images vybrané z bundle zatím podporují pouze samostatné `linux/amd64` manifesty. Nevybrané a base-only images převzaté přes neměnný digest mohou být také multi-platform OCI indexy; dostanou nový tag bez výběru nebo změny konkrétní platformy.
+
+### release to-bundle
+
+Existující release manifest lze převést zpět na bundle, pokud se jeho zaznamenané source images mají stát vstupem dalšího publish workflow:
+
+```bash
+oci-toolbox release to-bundle releases/2026.08.10.01-dev.yml \
+  --name tsm-sda-2.4 \
+  --output bundles/tsm-sda-2.4.yml
+```
+
+Příkaz odvodí společné source a target registry/project prefixy a zachová source repository, target repository, ID, deployment selector a extra tagy každé image. Zachová tedy i přejmenování repository, například source `tsm-config` publikovaný jako target `tsm-config-form`. Každá release image musí obsahovat metadata `source`, všechny source images musí používat jednu registry a všechny target images také jednu registry. Nejednoznačný nebo nereprezentovatelný vstup skončí chybou, místo aby vytvořil zavádějící bundle. Název bundle nelze z každého release manifestu spolehlivě získat, proto je `--name` povinný. `--output -` (výchozí hodnota) zapisuje YAML na standardní výstup.
+
+`--source-mode` určuje, jakou source referenci vygenerovaný bundle použije:
+
+- `--source-mode digest` je výchozí. Zapíše source digest každé image, takže pozdější `bundle publish` použije přesně stejná data jako původní release manifest. Je to bezpečná volba pro reprodukci, rollback a audit.
+- `--source-mode tag` zapíše původní source tag. Bundle se lépe používá jako měnitelný desired state pro další releases, jeho obsah se ale může při pozdějším použití změnit, pokud se tag v registry posune. Pokud některé image source tag chybí, konverze skončí chybou.
+
+```bash
+oci-toolbox release to-bundle releases/2026.08.10.01-dev.yml \
+  --name tsm-sda-2.4 \
+  --source-mode tag \
+  --output bundles/tsm-sda-2.4-tags.yml
+```
+
+Metadata patřící pouze do release manifestu, například `release_id`, `created_at`, platforma, primární target tag a target digest, se do bundle záměrně nepřenášejí. Nový primární target tag se později předá pomocí `bundle publish --release-id`.
 
 ### release reconstruct
 

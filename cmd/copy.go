@@ -43,9 +43,12 @@ var (
 	reduceChanges    bool
 	batchFile        string
 	releaseManifest  string
-	srcPrefix        string
-	destPrefix       string
+	srcBase          string
+	destBase         string
+	legacySrcPrefix  string
+	legacyDestPrefix string
 	copyOutput       string
+	copyReleaseID    string
 	continueOnError  bool
 	wrapEntrypoint   bool
 	noWrapEntrypoint bool
@@ -107,15 +110,15 @@ func currentCopyRunOptions() copyRunOptions {
 }
 
 var copyCmd = &cobra.Command{
-	Use:   "copy SOURCE DESTINATION | copy --batch-file FILE | copy --release-manifest FILE --dest-prefix PREFIX",
+	Use:   "copy SOURCE DESTINATION | copy --batch-file FILE | copy --release-manifest FILE --dest-base BASE",
 	Short: "Copy and patch an OCI image between registries or Docker archives",
 	Args:  copyArgs,
 	Example: `  oci-toolbox copy docker://registry.example.com/app:latest docker://registry.example.com/app:patched
   oci-toolbox copy file://app.tgz docker://registry.example.com/app:restored
   oci-toolbox copy --src-creds user:pass --dest-creds user:pass docker://src/repo:tag docker://dst/repo:tag
   oci-toolbox copy --progress --recipe inject-tool.yml docker://src/repo:tag docker://dst/repo:tag
-  oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure
-  oci-toolbox copy --release-manifest release.yml --src-prefix registry.example.com/team --dest-prefix mirror.example.com/team --output mirrored-release.yml`,
+  oci-toolbox copy --batch-file images.yml --release-id RE_2026.08.10.01 --output release.yml --src-insecure --dest-insecure
+  oci-toolbox copy --release-manifest release.yml --src-base registry.example.com/team --dest-base mirror.example.com/team --output mirrored-release.yml`,
 	RunE: runCopy,
 }
 
@@ -131,9 +134,14 @@ func init() {
 	copyCmd.Flags().BoolVar(&reduceChanges, "reduce-changes", false, "preserve base layers and reduce recipe changes into one delta layer")
 	copyCmd.Flags().StringVar(&batchFile, "batch-file", "", "YAML file with copy jobs to run sequentially")
 	copyCmd.Flags().StringVar(&releaseManifest, "release-manifest", "", "release manifest whose digest-locked images should be copied")
-	copyCmd.Flags().StringVar(&srcPrefix, "src-prefix", "", "source image prefix to replace; defaults to release manifest registry_base")
-	copyCmd.Flags().StringVar(&destPrefix, "dest-prefix", "", "destination image prefix for release manifest copies")
+	copyCmd.Flags().StringVar(&srcBase, "src-base", "", "source registry/repository base to replace; defaults to release manifest registry_base")
+	copyCmd.Flags().StringVar(&destBase, "dest-base", "", "destination registry/repository base for release manifest copies")
+	copyCmd.Flags().StringVar(&legacySrcPrefix, "src-prefix", "", "renamed to --src-base")
+	copyCmd.Flags().StringVar(&legacyDestPrefix, "dest-prefix", "", "renamed to --dest-base")
+	_ = copyCmd.Flags().MarkHidden("src-prefix")
+	_ = copyCmd.Flags().MarkHidden("dest-prefix")
 	copyCmd.Flags().StringVarP(&copyOutput, "output", "o", "", "write a release manifest for copied destination images")
+	copyCmd.Flags().StringVar(&copyReleaseID, "release-id", "", "release identifier for --batch-file output; inferred from a common destination tag when omitted")
 	copyCmd.Flags().BoolVar(&continueOnError, "continue-on-error", false, "continue batch processing after a copy fails")
 	copyCmd.Flags().BoolVar(&wrapEntrypoint, "wrap-entrypoint", false, "wrap SOURCE entrypoint and command for all shadow recipe steps")
 	copyCmd.Flags().BoolVar(&noWrapEntrypoint, "no-wrap-entrypoint", false, "do not wrap the original entrypoint for any shadow recipe step")
@@ -159,14 +167,29 @@ var (
 )
 
 func copyArgs(_ *cobra.Command, args []string) error {
+	if legacySrcPrefix != "" && legacyDestPrefix != "" {
+		return errors.New("--src-prefix and --dest-prefix were renamed to --src-base and --dest-base; update the command")
+	}
+	if legacySrcPrefix != "" {
+		return errors.New("--src-prefix was renamed to --src-base; update the command")
+	}
+	if legacyDestPrefix != "" {
+		return errors.New("--dest-prefix was renamed to --dest-base; update the command")
+	}
 	if batchFile != "" && releaseManifest != "" {
 		return fmt.Errorf("--batch-file and --release-manifest cannot be used together")
 	}
-	if releaseManifest == "" && (srcPrefix != "" || destPrefix != "") {
-		return fmt.Errorf("--src-prefix and --dest-prefix require --release-manifest")
+	if releaseManifest == "" && (srcBase != "" || destBase != "") {
+		return fmt.Errorf("--src-base and --dest-base require --release-manifest")
 	}
-	if releaseManifest == "" && copyOutput != "" {
-		return fmt.Errorf("--output requires --release-manifest")
+	if copyOutput != "" && batchFile == "" && releaseManifest == "" {
+		return fmt.Errorf("--output requires --batch-file or --release-manifest")
+	}
+	if copyReleaseID != "" && batchFile == "" {
+		return fmt.Errorf("--release-id requires --batch-file")
+	}
+	if copyReleaseID != "" && copyOutput == "" {
+		return fmt.Errorf("--release-id requires --output")
 	}
 	if batchFile != "" {
 		if len(args) != 0 {
@@ -233,7 +256,29 @@ func runCopy(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		return runCopyBatch(cmd.Context(), batch)
+		var manifest *bundle.ReleaseManifest
+		if copyOutput != "" {
+			if err := ensureReleaseOutputAvailable(copyOutput); err != nil {
+				return err
+			}
+			manifest, err = prepareBatchReleaseManifest(batch, copyReleaseID)
+			if err != nil {
+				return err
+			}
+		}
+		if err := runCopyBatch(cmd.Context(), batch); err != nil {
+			return err
+		}
+		if manifest != nil {
+			if err := resolveBatchReleaseManifest(cmd, manifest, batch); err != nil {
+				return err
+			}
+			if err := writeReleaseManifest(cmd, copyOutput, manifest); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "release manifest written to %s\n", copyOutput)
+		}
+		return nil
 	}
 	if releaseManifest != "" {
 		if len(destTags) > 0 {
@@ -250,7 +295,7 @@ func runCopy(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
-		plan, err := loadReleaseCopyPlan(releaseManifest, srcPrefix, destPrefix)
+		plan, err := loadReleaseCopyPlan(releaseManifest, srcBase, destBase)
 		if err != nil {
 			return err
 		}
@@ -291,6 +336,9 @@ type copyBatchItem struct {
 	Dest           string   `yaml:"dest,omitempty"`
 	Destination    string   `yaml:"destination,omitempty"`
 	DestTags       []string `yaml:"dest_tags,omitempty"`
+	ID             string   `yaml:"id,omitempty"`
+	AppName        string   `yaml:"app_name,omitempty"`
+	ContainerName  string   `yaml:"container_name,omitempty"`
 	ExpectedDigest string   `yaml:"-"`
 }
 
@@ -366,7 +414,200 @@ func loadCopyBatch(path string) ([]copyBatchItem, error) {
 	return batch.Copy, nil
 }
 
-func loadReleaseCopyPlan(path, sourcePrefix, targetPrefix string) (*releaseCopyPlan, error) {
+func prepareBatchReleaseManifest(batch []copyBatchItem, requestedReleaseID string) (*bundle.ReleaseManifest, error) {
+	releaseID := strings.TrimSpace(requestedReleaseID)
+	if releaseID == "" {
+		var commonTag string
+		for i, item := range batch {
+			ref, err := parseBatchRegistryReference(item.target(), "destination")
+			if err != nil {
+				return nil, fmt.Errorf("copy[%d]: %w", i, err)
+			}
+			tagged, ok := ref.(name.Tag)
+			if !ok {
+				return nil, errors.New("--release-id is required when batch destinations do not all use the same tag")
+			}
+			if commonTag == "" {
+				commonTag = tagged.Identifier()
+			} else if commonTag != tagged.Identifier() {
+				return nil, errors.New("--release-id is required when batch destinations use different tags")
+			}
+		}
+		releaseID = commonTag
+	}
+	if _, err := name.NewTag("example.invalid/repository:"+releaseID, name.WeakValidation); err != nil {
+		return nil, fmt.Errorf("invalid --release-id %q: %w", releaseID, err)
+	}
+
+	manifest := &bundle.ReleaseManifest{
+		ReleaseID: releaseID,
+		Images:    make([]bundle.ReleaseImage, 0, len(batch)),
+	}
+	selectors := make(map[string]int, len(batch))
+	ids := make(map[string]int, len(batch))
+	for i, item := range batch {
+		dstRef, err := parseBatchRegistryReference(item.target(), "destination")
+		if err != nil {
+			return nil, fmt.Errorf("copy[%d]: %w", i, err)
+		}
+		if _, err := parseBatchRegistryReference(item.source(), "source"); err != nil {
+			return nil, fmt.Errorf("copy[%d]: %w", i, err)
+		}
+		inferred := bundle.InferredName(dstRef.Context().Name())
+		appName := strings.TrimSpace(item.AppName)
+		if appName == "" {
+			appName = inferred
+		}
+		containerName := strings.TrimSpace(item.ContainerName)
+		if containerName == "" {
+			containerName = inferred
+		}
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			id = appName
+			if containerName != appName {
+				id += "/" + containerName
+			}
+		}
+		selector := appName + "\x00" + containerName
+		if previous, exists := selectors[selector]; exists {
+			return nil, fmt.Errorf("copy[%d] duplicates deployment selector from copy[%d]: %s/%s", i, previous, appName, containerName)
+		}
+		if previous, exists := ids[id]; exists {
+			return nil, fmt.Errorf("copy[%d] duplicates image id from copy[%d]: %s", i, previous, id)
+		}
+		selectors[selector] = i
+		ids[id] = i
+		tag := ""
+		if tagged, ok := dstRef.(name.Tag); ok {
+			tag = tagged.Identifier()
+		}
+		manifest.Images = append(manifest.Images, bundle.ReleaseImage{
+			ID:            id,
+			AppName:       appName,
+			ContainerName: containerName,
+			Image:         dstRef.Context().Name(),
+			Tag:           tag,
+			ExtraTags:     normalizeAdditionalTags(item.DestTags),
+		})
+	}
+	manifest.RegistryBase = commonReleaseRegistryBase(manifest.Images)
+	return manifest, nil
+}
+
+func resolveBatchReleaseManifest(cmd *cobra.Command, manifest *bundle.ReleaseManifest, batch []copyBatchItem) error {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	srcOpts := append(auth.RemoteOptions(parseCreds(srcCreds)), remote.WithContext(ctx))
+	dstOpts := append(auth.RemoteOptions(parseCreds(destCreds)), remote.WithContext(ctx))
+	if srcInsecure {
+		srcOpts = append(srcOpts, auth.InsecureTransport())
+	}
+	if destInsecure {
+		dstOpts = append(dstOpts, auth.InsecureTransport())
+	}
+	var counter *progress.Counter
+	if showProgress {
+		counter = progress.NewCounter(len(batch), "record release manifest", cmd.ErrOrStderr())
+		defer func() { _ = counter.Exit() }()
+	}
+	commonPlatform := ""
+	mixedPlatforms := false
+	for i, item := range batch {
+		selector := manifest.Images[i].AppName + "/" + manifest.Images[i].ContainerName
+		counter.Describe(fmt.Sprintf("record %d/%d: %s", i+1, len(batch), selector))
+		dstRef, err := parseBatchRegistryReference(item.target(), "destination")
+		if err != nil {
+			return err
+		}
+		dstDesc, err := fetchManifestDescriptor(dstRef.String(), dstOpts)
+		if err != nil {
+			return fmt.Errorf("inspecting copied destination %s: %w", dstRef, err)
+		}
+		platform, err := reconstructPlatform(dstDesc)
+		if err != nil {
+			return fmt.Errorf("inspecting copied destination %s platform: %w", dstRef, err)
+		}
+		if commonPlatform == "" {
+			commonPlatform = platform
+		} else if commonPlatform != platform {
+			mixedPlatforms = true
+		}
+
+		srcRef, err := parseBatchRegistryReference(item.source(), "source")
+		if err != nil {
+			return err
+		}
+		srcDesc, err := fetchManifestDescriptor(srcRef.String(), srcOpts)
+		if err != nil {
+			return fmt.Errorf("inspecting batch source %s: %w", srcRef, err)
+		}
+		sourceTag := ""
+		if tagged, ok := srcRef.(name.Tag); ok {
+			sourceTag = tagged.Identifier()
+		}
+		manifest.Images[i].Digest = dstDesc.Digest.String()
+		manifest.Images[i].Platform = platform
+		manifest.Images[i].Source = &bundle.ReleaseSource{
+			Image:  srcRef.Context().Name(),
+			Tag:    sourceTag,
+			Digest: srcDesc.Digest.String(),
+		}
+		if err := counter.Advance(); err != nil {
+			return fmt.Errorf("updating release manifest progress: %w", err)
+		}
+	}
+	if err := counter.Finish(); err != nil {
+		return fmt.Errorf("finishing release manifest progress: %w", err)
+	}
+	counter = nil
+	manifest.CreatedAt = time.Now().UTC()
+	if !mixedPlatforms {
+		manifest.Platform = commonPlatform
+	}
+	if err := manifest.Validate(); err != nil {
+		return fmt.Errorf("generated release manifest: %w", err)
+	}
+	return nil
+}
+
+func parseBatchRegistryReference(value, role string) (name.Reference, error) {
+	if isFileRef(value) || isOCIArchiveRef(value) || isDaemonRef(value) {
+		return nil, fmt.Errorf("%s %q is not a registry reference; release manifest output requires registry sources and destinations", role, value)
+	}
+	ref, err := name.ParseReference(stripScheme(value), name.WeakValidation)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s reference %q: %w", role, value, err)
+	}
+	return ref, nil
+}
+
+func commonReleaseRegistryBase(images []bundle.ReleaseImage) string {
+	if len(images) == 0 {
+		return ""
+	}
+	common := strings.Split(strings.Trim(images[0].Image, "/"), "/")
+	for _, image := range images[1:] {
+		parts := strings.Split(strings.Trim(image.Image, "/"), "/")
+		limit := len(common)
+		if len(parts) < limit {
+			limit = len(parts)
+		}
+		i := 0
+		for i < limit && common[i] == parts[i] {
+			i++
+		}
+		common = common[:i]
+	}
+	if len(images) == 1 && len(common) > 1 {
+		common = common[:len(common)-1]
+	}
+	return strings.Join(common, "/")
+}
+
+func loadReleaseCopyPlan(path, sourceBase, targetBase string) (*releaseCopyPlan, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading release manifest %q: %w", path, err)
@@ -398,22 +639,22 @@ func loadReleaseCopyPlan(path, sourcePrefix, targetPrefix string) (*releaseCopyP
 		return nil, fmt.Errorf("release manifest %q has no images", path)
 	}
 
-	sourcePrefix = normalizeCopyPrefix(sourcePrefix)
-	if sourcePrefix == "" {
-		sourcePrefix = normalizeCopyPrefix(manifest.RegistryBase)
+	sourceBase = normalizeCopyPrefix(sourceBase)
+	if sourceBase == "" {
+		sourceBase = normalizeCopyPrefix(manifest.RegistryBase)
 	}
-	if sourcePrefix == "" {
-		return nil, fmt.Errorf("--src-prefix is required when release manifest %q has no registry_base", path)
+	if sourceBase == "" {
+		return nil, fmt.Errorf("--src-base is required when release manifest %q has no registry_base", path)
 	}
-	targetPrefix = normalizeCopyPrefix(targetPrefix)
-	if targetPrefix == "" {
-		return nil, fmt.Errorf("--dest-prefix is required with --release-manifest")
+	targetBase = normalizeCopyPrefix(targetBase)
+	if targetBase == "" {
+		return nil, fmt.Errorf("--dest-base is required with --release-manifest")
 	}
-	if _, err := name.NewRepository(sourcePrefix+"/prefix-check", name.WeakValidation); err != nil {
-		return nil, fmt.Errorf("invalid source prefix %q: %w", sourcePrefix, err)
+	if _, err := name.NewRepository(sourceBase+"/base-check", name.WeakValidation); err != nil {
+		return nil, fmt.Errorf("invalid source base %q: %w", sourceBase, err)
 	}
-	if _, err := name.NewRepository(targetPrefix+"/prefix-check", name.WeakValidation); err != nil {
-		return nil, fmt.Errorf("invalid destination prefix %q: %w", targetPrefix, err)
+	if _, err := name.NewRepository(targetBase+"/base-check", name.WeakValidation); err != nil {
+		return nil, fmt.Errorf("invalid destination base %q: %w", targetBase, err)
 	}
 
 	items := make([]copyBatchItem, 0, len(manifest.Images))
@@ -424,18 +665,18 @@ func loadReleaseCopyPlan(path, sourcePrefix, targetPrefix string) (*releaseCopyP
 		if repository == "" {
 			return nil, fmt.Errorf("release manifest %q images[%d].image is required", path, i)
 		}
-		if !strings.HasPrefix(repository, sourcePrefix+"/") {
+		if !strings.HasPrefix(repository, sourceBase+"/") {
 			return nil, fmt.Errorf(
-				"release manifest %q images[%d].image %q is outside source prefix %q",
+				"release manifest %q images[%d].image %q is outside source base %q",
 				path,
 				i,
 				repository,
-				sourcePrefix,
+				sourceBase,
 			)
 		}
-		relativeRepository := strings.TrimPrefix(repository, sourcePrefix+"/")
+		relativeRepository := strings.TrimPrefix(repository, sourceBase+"/")
 		if relativeRepository == "" {
-			return nil, fmt.Errorf("release manifest %q images[%d].image has no repository below source prefix", path, i)
+			return nil, fmt.Errorf("release manifest %q images[%d].image has no repository below source base", path, i)
 		}
 
 		digest := strings.TrimSpace(releaseImage.Digest)
@@ -444,7 +685,7 @@ func loadReleaseCopyPlan(path, sourcePrefix, targetPrefix string) (*releaseCopyP
 			return nil, fmt.Errorf("release manifest %q images[%d].digest is invalid: %w", path, i, err)
 		}
 		destination, err := name.NewTag(
-			targetPrefix+"/"+relativeRepository+":"+releaseID,
+			targetBase+"/"+relativeRepository+":"+releaseID,
 			name.WeakValidation,
 		)
 		if err != nil {
@@ -486,7 +727,7 @@ func loadReleaseCopyPlan(path, sourcePrefix, targetPrefix string) (*releaseCopyP
 			ReleaseID:    releaseID,
 			CreatedAt:    time.Now().UTC(),
 			Bundle:       manifest.Bundle,
-			RegistryBase: targetPrefix,
+			RegistryBase: targetBase,
 			Platform:     manifest.Platform,
 			Images:       targetImages,
 		},

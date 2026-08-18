@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -54,8 +55,15 @@ type releaseCompareOptions struct {
 	failOnChange bool
 }
 
+type releaseToBundleOptions struct {
+	name       string
+	output     string
+	sourceMode string
+}
+
 var selectorsOptions releaseSelectorsOptions
 var compareOptions releaseCompareOptions
+var toBundleOptions releaseToBundleOptions
 
 var releaseCmd = &cobra.Command{
 	Use:   "release",
@@ -108,6 +116,21 @@ var releaseCompareCmd = &cobra.Command{
   oci-toolbox release compare previous.yml current.yml --mode full --changed-only --fail-on-change`,
 }
 
+var releaseToBundleCmd = &cobra.Command{
+	Use:   "to-bundle RELEASE_MANIFEST",
+	Short: "Convert a release manifest into an image bundle",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runReleaseToBundle,
+	Example: `  oci-toolbox release to-bundle releases/2026.08.10.01.yml \
+    --name tsm-sda-2.4 \
+    --output bundles/tsm-sda-2.4.yml
+
+  oci-toolbox release to-bundle releases/2026.08.10.01.yml \
+    --name tsm-sda-2.4 \
+    --source-mode tag \
+    --output bundles/tsm-sda-2.4-tags.yml`,
+}
+
 func init() {
 	releaseReconstructCmd.Flags().StringVarP(&reconstructOptions.file, "file", "f", "", "strict YAML file containing image references and deployment selectors")
 	releaseReconstructCmd.Flags().StringVarP(&reconstructOptions.output, "output", "o", "", "release manifest output path")
@@ -129,8 +152,67 @@ func init() {
 	releaseCompareCmd.Flags().StringVar(&compareOptions.color, "color", "auto", "colorize table and summary output: auto, always, or never")
 	releaseCompareCmd.Flags().BoolVar(&compareOptions.changedOnly, "changed-only", false, "omit unchanged deployment selectors")
 	releaseCompareCmd.Flags().BoolVar(&compareOptions.failOnChange, "fail-on-change", false, "return a non-zero exit status when manifests differ")
-	releaseCmd.AddCommand(releaseReconstructCmd, releaseSelectorsCmd, releaseCompareCmd)
+	releaseToBundleCmd.Flags().StringVar(&toBundleOptions.name, "name", "", "name stored in the generated bundle (required)")
+	releaseToBundleCmd.Flags().StringVarP(&toBundleOptions.output, "output", "o", "-", "bundle YAML output path, or - for stdout")
+	releaseToBundleCmd.Flags().StringVar(&toBundleOptions.sourceMode, "source-mode", "digest", "source reference mode: digest (exact and immutable) or tag (reusable but mutable)")
+	releaseCmd.AddCommand(releaseReconstructCmd, releaseSelectorsCmd, releaseCompareCmd, releaseToBundleCmd)
 	rootCmd.AddCommand(releaseCmd)
+}
+
+func runReleaseToBundle(cmd *cobra.Command, args []string) error {
+	if strings.TrimSpace(toBundleOptions.name) == "" {
+		return errors.New("--name is required")
+	}
+	mode := bundle.BundleSourceMode(strings.ToLower(strings.TrimSpace(toBundleOptions.sourceMode)))
+	if mode != bundle.BundleSourceDigest && mode != bundle.BundleSourceTag {
+		return fmt.Errorf("invalid --source-mode %q: expected digest or tag", toBundleOptions.sourceMode)
+	}
+	manifest, err := bundle.LoadRelease(args[0])
+	if err != nil {
+		return err
+	}
+	converted, err := bundle.BundleFromRelease(manifest, toBundleOptions.name, mode)
+	if err != nil {
+		return fmt.Errorf("converting release manifest %q: %w", args[0], err)
+	}
+	if err := writeBundleYAML(cmd, toBundleOptions.output, converted); err != nil {
+		return err
+	}
+	if toBundleOptions.output != "-" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "bundle written to %s\n", toBundleOptions.output)
+	}
+	return nil
+}
+
+func writeBundleYAML(cmd *cobra.Command, output string, value *bundle.Bundle) error {
+	if output == "-" {
+		return bundle.Encode(cmd.OutOrStdout(), value)
+	}
+	if err := ensureReleaseOutputAvailable(output); err != nil {
+		return err
+	}
+	dir := filepath.Dir(output)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(output)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := bundle.Encode(tmp, value); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, output)
 }
 
 func runReleaseSelectors(cmd *cobra.Command, args []string) error {

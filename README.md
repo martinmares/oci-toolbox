@@ -19,6 +19,7 @@
   - [tree](#tree)
   - [examples](#examples-command)
   - [bundle](#bundle)
+  - [release to-bundle](#release-to-bundle)
   - [release reconstruct](#release-reconstruct)
   - [release selectors and compare](#release-selectors-and-compare)
   - [release verify](#release-verify)
@@ -163,9 +164,10 @@ For a plain registry-to-registry copy without recipes, layer reduction, entrypoi
 | `--debug` | Enable verbose output |
 | `--batch-file path/to/images.yml` | Run multiple copy jobs from a YAML file |
 | `--release-manifest path/to/release.yml` | Copy all digest-locked images from a release manifest |
-| `--src-prefix registry/path` | Source prefix replaced in release-manifest mode; defaults to `registry_base` |
-| `--dest-prefix registry/path` | Required destination prefix in release-manifest mode |
+| `--src-base registry/path` | Source registry/repository base replaced in release-manifest mode; defaults to `registry_base` |
+| `--dest-base registry/path` | Required destination registry/repository base in release-manifest mode |
 | `--output path/to/release.yml` | Write a release manifest for copied destination images |
+| `--release-id ID` | Release ID for `--batch-file` output; inferred from a common destination tag when omitted |
 | `--retries count` | Additional attempts for transient network failures; default `4`, use `0` to disable |
 | `--retry-initial-delay duration` | Delay before the first retry; default `2s` |
 | `--retry-max-delay duration` | Maximum exponential retry delay; default `30s` |
@@ -240,6 +242,9 @@ Use `--batch-file` when you need to copy multiple images with the same CLI optio
 copy:
   - src: registry.example.com/team/config:release-1.0
     dest: registry.example.com/team/config:test-latest
+    id: config
+    app_name: config-service
+    container_name: application
     dest_tags:
       - latest
       - stable
@@ -250,6 +255,8 @@ copy:
 ```bash
 oci-toolbox copy \
   --batch-file images.yml \
+  --release-id RE_2026.08.10.01 \
+  --output releases/RE_2026.08.10.01-dev.yml \
   --src-insecure \
   --dest-insecure \
   --retries 5 \
@@ -260,7 +267,9 @@ oci-toolbox copy \
 
 Batch jobs run sequentially. Without `--continue-on-error`, the first failed copy stops the batch. With `--continue-on-error`, later entries still run, but the command returns a non-zero exit code at the end if any entry failed and prints a failure summary.
 
-The primary batch keys are `src` and `dest`, matching the `--src-*` and `--dest-*` CLI flags. `source` and `destination` are also accepted as aliases. `dest_tags` adds extra tags in the same destination repository after the image is copied once, equivalent to repeating `--dest-tag` for a single copy command. Duplicate destination images are rejected during validation.
+The primary batch keys are `src` and `dest`, matching the `--src-*` and `--dest-*` CLI flags. `source` and `destination` are also accepted as aliases. `dest_tags` adds extra tags in the same destination repository after the image is copied once, equivalent to repeating `--dest-tag` for a single copy command. Optional `id`, `app_name`, and `container_name` values define deployment identity in the generated release manifest; when omitted, they are inferred from the destination repository name. Duplicate destination images, IDs, and selectors are rejected during validation.
+
+Combining `--batch-file` with `--output` inspects every destination manifest after all copies succeed and records its actual digest, tag, and platform. The source reference and digest are stored in `source`. `--release-id` is optional only when all destinations use the same tag, in which case that tag becomes the release ID. Output is written atomically and an existing file is never overwritten.
 
 ### Release Manifest Copy
 
@@ -269,8 +278,8 @@ Use `--release-manifest` to copy an immutable release to another registry path w
 ```bash
 oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
-  --src-prefix quay.example.com/nac-test \
-  --dest-prefix artifactory.example.com/nac-test \
+  --src-base quay.example.com/nac-test \
+  --dest-base artifactory.example.com/nac-test \
   --output releases/2026.06.25.01-replica.yml \
   --src-insecure \
   --dest-insecure \
@@ -280,7 +289,7 @@ oci-toolbox copy \
   --progress
 ```
 
-Every source uses the manifest's `image@digest`. The source prefix is replaced with `--dest-prefix`, preserving the remaining repository path, and every destination receives the manifest's `release_id` as its tag. When `--src-prefix` is omitted, `registry_base` from the manifest is used; if neither is available, the command fails before copying. Images outside the source prefix and duplicate destinations are rejected. Manifest `tag` and `extra_tags` values are intentionally not copied.
+Every source uses the manifest's `image@digest`. The source base is replaced with `--dest-base`, preserving the remaining repository path, and every destination receives the manifest's `release_id` as its tag. When `--src-base` is omitted, `registry_base` from the manifest is used; if neither is available, the command fails before copying. Images outside the source base and duplicate destinations are rejected. Manifest `tag` and `extra_tags` values are intentionally not copied. The former `--src-prefix` and `--dest-prefix` flags were renamed; using either old spelling fails with a message pointing to `--src-base` or `--dest-base`.
 
 `--release-manifest`, `--batch-file`, and positional `SOURCE DESTINATION` are separate input modes. Credentials, TLS settings, progress, debug output, and `--continue-on-error` apply to every generated copy job.
 
@@ -609,6 +618,32 @@ When a reused base image stays in the same repository, publish creates the new r
 With `--progress`, a separate `preflight` progress bar is shown before image transfer. It reports the number of inspected images, the selector currently being checked, and whether the source digest or destination tag is being inspected.
 
 New images selected from the bundle currently support only single-platform `linux/amd64` manifests. Unselected and base-only images reused by immutable digest may also be multi-platform OCI indexes; they are retagged without selecting or modifying a child platform.
+
+### release to-bundle
+
+Convert an existing release manifest back into a bundle when its recorded source images should become the input for another publish workflow:
+
+```bash
+oci-toolbox release to-bundle releases/2026.08.10.01-dev.yml \
+  --name tsm-sda-2.4 \
+  --output bundles/tsm-sda-2.4.yml
+```
+
+The command infers the common source and target registry/project prefixes and keeps each image's source repository, target repository, ID, deployment selector, and extra tags. This also preserves repository renames such as a source `tsm-config` published as target `tsm-config-form`. Every release image must contain `source` metadata, all source images must use one registry, and all target images must use one registry. Ambiguous or unrepresentable input fails instead of generating a misleading bundle. The bundle name cannot be recovered reliably from every release manifest and is therefore required through `--name`. Use `--output -` (the default) to write YAML to stdout.
+
+`--source-mode` controls what the generated bundle uses as its source reference:
+
+- `--source-mode digest` is the default. It records each source digest, so a later `bundle publish` consumes exactly the bytes described by the release manifest. This is the safe choice for reproduction, rollback, and audit workflows.
+- `--source-mode tag` records each original source tag instead. The generated bundle is easier to reuse as desired state for later releases, but resolving it later may produce different content if a registry tag moves. Conversion fails if any release image lacks a source tag.
+
+```bash
+oci-toolbox release to-bundle releases/2026.08.10.01-dev.yml \
+  --name tsm-sda-2.4 \
+  --source-mode tag \
+  --output bundles/tsm-sda-2.4-tags.yml
+```
+
+Release-only metadata such as `release_id`, `created_at`, platform, the primary target tag, and target digest is intentionally not stored in the bundle. A new primary target tag is supplied later with `bundle publish --release-id`.
 
 ### release reconstruct
 
