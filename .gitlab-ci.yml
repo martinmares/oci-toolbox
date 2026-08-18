@@ -65,10 +65,10 @@ release_binaries:
       artifacts: true
   script:
     - bash scripts/ci_package_release.sh
+    - bash scripts/ci_upload_release_packages.sh
   artifacts:
     paths:
-      - dist/release/*.tar.gz
-      - dist/release/SHA256SUMS
+      - dist/release_assets.txt
     expire_in: 30 days
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

@@ -55,7 +55,7 @@ done
 
 (
   cd "${release_dir}"
-  sha256sum *.tar.gz > SHA256SUMS
+  sha256sum -- *.tar.gz > SHA256SUMS
 )
 
 echo
