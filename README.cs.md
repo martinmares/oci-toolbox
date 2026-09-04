@@ -160,6 +160,8 @@ U čisté kopie registry→registry bez recipe, redukce vrstev, entrypoint wrapp
 |------|-------|
 | `--src-creds user:pass` | Credentials pro zdrojový registry |
 | `--dest-creds user:pass` | Credentials pro cílový registry |
+| `--src-proxy URL\|direct` | Proxy použitá pouze pro operace se zdrojovým registry |
+| `--dest-proxy URL\|direct` | Proxy použitá pouze pro operace s cílovým registry |
 | `--recipe cesta/k/recipe.yml` | Recipe soubor (lze opakovat) |
 | `--debug` | Zapne podrobný výstup |
 | `--batch-file cesta/k/images.yml` | Spustí více copy jobů ze YAML souboru |
@@ -180,6 +182,18 @@ U čisté kopie registry→registry bez recipe, redukce vrstev, entrypoint wrapp
 | `--reduce-changes` | Zachová base vrstvy a změny z recipe sloučí do jedné delta vrstvy |
 | `--progress` | Vykreslí terminálové progress bary |
 | `--progress-json` | Emituje machine-readable progress eventy jako JSONL |
+
+Směrování přes proxy je oddělené pro zdroj a cíl. Externí image lze například stáhnout přes firemní Squid proxy a do interní registry ji odeslat přímo:
+
+```bash
+oci-toolbox copy \
+  docker://registry.external.example/team/app:1.2 \
+  docker://registry.internal.example/team/app:1.2 \
+  --src-proxy http://proxy.example.com:8080 \
+  --dest-proxy direct
+```
+
+Pokud proxy flag není uvedený, zůstává zachované standardní chování proměnných `HTTP_PROXY`, `HTTPS_PROXY` a `NO_PROXY`. Speciální hodnota `direct` proxy z prostředí pro daný směr vypne. Proxy se používá pro kontroly manifestů a digestů, pull, push, reuse blobů i vzdálené tagování. HTTP proxy používá pro HTTPS registry metodu CONNECT, takže registry credentials a obsah image zůstávají uvnitř TLS tunelu, pokud proxy neprovádí TLS interception. Credentials vložené do URL obyčejné HTTP proxy jsou odmítnuty; autentizovaná proxy URL musí používat HTTPS.
 
 **Příklady:**
 
@@ -574,6 +588,8 @@ oci-toolbox bundle publish bundle.yml \
   --progress
 ```
 
+`bundle publish` podporuje stejné nezávislé směrování `--src-proxy` a `--dest-proxy` jako `copy`. Platí pro preflight kontrolu, reuse digestů při selective release, kopírování i přetagování.
+
 `bundle publish` před kopírováním zkontroluje všechny image. Chybějící primární release tag vytvoří, existující shodný digest považuje za idempotentní opakování a při existujícím tagu s jiným digestem skončí chybou. Extra tagy jako `stable` jsou pohyblivé aliasy. Výstupní soubor nesmí existovat. Git commit, tag ani push záměrně nejsou úlohou `oci-toolbox`; provádí je CI nebo volající skript.
 
 #### Selektivní release z base manifestu
@@ -834,7 +850,8 @@ Cleanup pracuje s unikátními manifest digesty, takže více tagů stejné imag
 oci-toolbox snapshot create \
   --namespace example \
   --output-dir ./snapshots \
-  --src-creds user:password
+  --src-creds user:password \
+  --src-proxy http://proxy.example.com:8080
 
 # Volitelný glob; * odpovídá i / a vyhodnocuje se nad celou image referencí.
 oci-toolbox snapshot create \
@@ -845,6 +862,7 @@ oci-toolbox snapshot create \
 oci-toolbox snapshot restore \
   --namespace example \
   --dest-creds user:password \
+  --dest-proxy direct \
   ./snapshots/example/20260728-120000.yml
 ```
 

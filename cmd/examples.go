@@ -26,6 +26,13 @@ func writeExamples(w io.Writer, color bool) error {
 	section(w, "Quick copy", color)
 	codeBlock(w, `# Copy an image unchanged.
 oci-toolbox copy docker://registry.example.com/team/app:1.2 docker://registry.example.com/team/app:1.2-copy`, color)
+	fmt.Fprintln(w)
+	codeBlock(w, `# Pull through a corporate proxy and push directly to an internal registry.
+oci-toolbox copy \
+  docker://registry.external.example/team/app:1.2 \
+  docker://registry.internal.example/team/app:1.2 \
+  --src-proxy http://proxy.example.com:8080 \
+  --dest-proxy direct`, color)
 
 	section(w, "Batch copy", color)
 	codeBlock(w, `# Copy every image listed in images.yml. Both registries use an insecure TLS connection.

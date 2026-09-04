@@ -48,7 +48,7 @@ func TestBackupWritesCompleteManifestAndCopiesImages(t *testing.T) {
 		"registry.example.com/team/app:1",
 		"registry.example.com/other/worker:2",
 	}}, copier, BackupOptions{
-		Namespace: "example", OutputDir: t.TempDir(), SrcInsecure: true,
+		Namespace: "example", OutputDir: t.TempDir(), SrcInsecure: true, SrcProxy: "http://proxy.example.com:8080",
 		Now: func() time.Time { return now }, Stdout: io.Discard, Stderr: io.Discard,
 	})
 	if err != nil {
@@ -57,7 +57,7 @@ func TestBackupWritesCompleteManifestAndCopiesImages(t *testing.T) {
 	if len(copier.calls) != 2 {
 		t.Fatalf("calls = %d, want 2", len(copier.calls))
 	}
-	if !copier.calls[0].options.SrcInsecure || !copier.calls[0].options.Progress {
+	if !copier.calls[0].options.SrcInsecure || copier.calls[0].options.SrcProxy != "http://proxy.example.com:8080" || !copier.calls[0].options.Progress {
 		t.Fatalf("copy options = %#v", copier.calls[0].options)
 	}
 	if !strings.HasPrefix(copier.calls[0].destination, "oci-archive://") {
@@ -157,7 +157,7 @@ func TestRestoreVerifiesArchiveAndCopiesImages(t *testing.T) {
 	copier := &fakeCopier{}
 	var output bytes.Buffer
 	if err := Restore(context.Background(), copier, RestoreOptions{
-		ManifestPath: manifestPath, Namespace: "example", DestInsecure: true,
+		ManifestPath: manifestPath, Namespace: "example", DestInsecure: true, DestProxy: "direct",
 		Stdout: &output, Stderr: io.Discard,
 	}); err != nil {
 		t.Fatalf("Restore: %v", err)
@@ -165,7 +165,7 @@ func TestRestoreVerifiesArchiveAndCopiesImages(t *testing.T) {
 	if len(copier.calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(copier.calls))
 	}
-	if !copier.calls[0].options.DestInsecure || !copier.calls[0].options.Progress {
+	if !copier.calls[0].options.DestInsecure || copier.calls[0].options.DestProxy != "direct" || !copier.calls[0].options.Progress {
 		t.Fatalf("copy options = %#v", copier.calls[0].options)
 	}
 	if !strings.HasPrefix(copier.calls[0].source, "file://") {

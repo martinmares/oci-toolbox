@@ -155,7 +155,7 @@ func ApplyWithReporter(workingImg v1.Image, r *Recipe, ctx *Context, report func
 }
 
 // ResolveContextSources pulls all named sources defined in the recipe.
-func ResolveContextSources(r *Recipe, mainRef string, mainImg v1.Image) (*Context, error) {
+func ResolveContextSources(r *Recipe, mainRef string, mainImg v1.Image, transportOpts ...remote.Option) (*Context, error) {
 	ctx := &Context{Sources: make(map[string]v1.Image)}
 
 	for _, src := range r.Sources {
@@ -169,6 +169,7 @@ func ResolveContextSources(r *Recipe, mainRef string, mainImg v1.Image) (*Contex
 
 		creds := registryCreds(r, ref)
 		opts := auth.RemoteOptions(creds)
+		opts = append(opts, transportOpts...)
 
 		img, err := pullImage(ref, opts)
 		if err != nil {

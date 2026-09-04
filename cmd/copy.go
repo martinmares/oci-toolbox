@@ -54,6 +54,8 @@ var (
 	noWrapEntrypoint bool
 	srcInsecure      bool
 	destInsecure     bool
+	srcProxy         string
+	destProxy        string
 	destTags         []string
 	retryCount       int
 	retryInitial     time.Duration
@@ -74,6 +76,8 @@ type copyRunOptions struct {
 	NoWrapEntrypoint bool
 	SrcInsecure      bool
 	DestInsecure     bool
+	SrcProxy         string
+	DestProxy        string
 	ExpectedDigest   string
 }
 
@@ -106,6 +110,8 @@ func currentCopyRunOptions() copyRunOptions {
 		NoWrapEntrypoint: noWrapEntrypoint,
 		SrcInsecure:      srcInsecure,
 		DestInsecure:     destInsecure,
+		SrcProxy:         srcProxy,
+		DestProxy:        destProxy,
 	}
 }
 
@@ -117,6 +123,7 @@ var copyCmd = &cobra.Command{
   oci-toolbox copy file://app.tgz docker://registry.example.com/app:restored
   oci-toolbox copy --src-creds user:pass --dest-creds user:pass docker://src/repo:tag docker://dst/repo:tag
   oci-toolbox copy --progress --recipe inject-tool.yml docker://src/repo:tag docker://dst/repo:tag
+  oci-toolbox copy --src-proxy http://proxy.example.com:8080 --dest-proxy direct docker://external/repo:tag docker://internal/repo:tag
   oci-toolbox copy --batch-file images.yml --release-id RE_2026.08.10.01 --output release.yml --src-insecure --dest-insecure
   oci-toolbox copy --release-manifest release.yml --src-base registry.example.com/team --dest-base mirror.example.com/team --output mirrored-release.yml`,
 	RunE: runCopy,
@@ -147,6 +154,8 @@ func init() {
 	copyCmd.Flags().BoolVar(&noWrapEntrypoint, "no-wrap-entrypoint", false, "do not wrap the original entrypoint for any shadow recipe step")
 	copyCmd.Flags().BoolVar(&srcInsecure, "src-insecure", false, "skip TLS certificate verification for source registry")
 	copyCmd.Flags().BoolVar(&destInsecure, "dest-insecure", false, "skip TLS certificate verification for destination registry")
+	copyCmd.Flags().StringVar(&srcProxy, "src-proxy", "", "source registry proxy URL, or direct to bypass environment proxies")
+	copyCmd.Flags().StringVar(&destProxy, "dest-proxy", "", "destination registry proxy URL, or direct to bypass environment proxies")
 	copyCmd.Flags().StringArrayVar(&destTags, "dest-tag", nil, "additional destination tag in the same repository (may be specified multiple times)")
 	copyCmd.Flags().IntVar(&retryCount, "retries", 4, "additional attempts for transient network failures; 0 disables retries")
 	copyCmd.Flags().DurationVar(&retryInitial, "retry-initial-delay", 2*time.Second, "delay before the first retry")
@@ -500,14 +509,16 @@ func resolveBatchReleaseManifest(cmd *cobra.Command, manifest *bundle.ReleaseMan
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	srcOpts := append(auth.RemoteOptions(parseCreds(srcCreds)), remote.WithContext(ctx))
-	dstOpts := append(auth.RemoteOptions(parseCreds(destCreds)), remote.WithContext(ctx))
-	if srcInsecure {
-		srcOpts = append(srcOpts, auth.InsecureTransport())
+	srcOpts, err := auth.RemoteOptionsWithTransport(parseCreds(srcCreds), srcProxy, srcInsecure)
+	if err != nil {
+		return fmt.Errorf("source registry transport: %w", err)
 	}
-	if destInsecure {
-		dstOpts = append(dstOpts, auth.InsecureTransport())
+	dstOpts, err := auth.RemoteOptionsWithTransport(parseCreds(destCreds), destProxy, destInsecure)
+	if err != nil {
+		return fmt.Errorf("destination registry transport: %w", err)
 	}
+	srcOpts = append(srcOpts, remote.WithContext(ctx))
+	dstOpts = append(dstOpts, remote.WithContext(ctx))
 	var counter *progress.Counter
 	if showProgress {
 		counter = progress.NewCounter(len(batch), "record release manifest", cmd.ErrOrStderr())
@@ -953,13 +964,23 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	srcOpts := append(auth.RemoteOptions(parseCreds(opts.SrcCreds)), remote.WithContext(ctx))
-	dstOpts := append(auth.RemoteOptions(parseCreds(opts.DestCreds)), remote.WithContext(ctx))
-	if opts.SrcInsecure {
-		srcOpts = append(srcOpts, auth.InsecureTransport())
+	srcOpts, err := auth.RemoteOptionsWithTransport(parseCreds(opts.SrcCreds), opts.SrcProxy, opts.SrcInsecure)
+	if err != nil {
+		return fmt.Errorf("source registry transport: %w", err)
 	}
-	if opts.DestInsecure {
-		dstOpts = append(dstOpts, auth.InsecureTransport())
+	dstOpts, err := auth.RemoteOptionsWithTransport(parseCreds(opts.DestCreds), opts.DestProxy, opts.DestInsecure)
+	if err != nil {
+		return fmt.Errorf("destination registry transport: %w", err)
+	}
+	srcOpts = append(srcOpts, remote.WithContext(ctx))
+	dstOpts = append(dstOpts, remote.WithContext(ctx))
+	recipeSourceTransportOpts := []remote.Option{remote.WithContext(ctx)}
+	if strings.TrimSpace(opts.SrcProxy) != "" || opts.SrcInsecure {
+		transportOpt, transportErr := auth.Transport(opts.SrcProxy, opts.SrcInsecure)
+		if transportErr != nil {
+			return fmt.Errorf("source registry transport: %w", transportErr)
+		}
+		recipeSourceTransportOpts = append(recipeSourceTransportOpts, transportOpt)
 	}
 
 	srcIsDaemon := isDaemonRef(src)
@@ -1071,7 +1092,6 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 		indexDigest string
 		srcLabel    string
 		archiveRoot *ociarchive.Content
-		err         error
 	)
 	if srcIsOCIArchive {
 		filePath := strings.TrimPrefix(src, "oci-archive://")
@@ -1314,7 +1334,7 @@ func runCopyOne(ctx context.Context, src, dst, batchLabel string, additionalDest
 			slog.Info("applying recipe", "name", r.Name)
 		}
 
-		ctx, err := recipe.ResolveContextSources(r, src, img)
+		ctx, err := recipe.ResolveContextSources(r, src, img, recipeSourceTransportOpts...)
 		if err != nil {
 			closeProg(srcCh, dstCh)
 			if jsonEmitter != nil {

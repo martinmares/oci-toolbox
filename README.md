@@ -160,6 +160,8 @@ For a plain registry-to-registry copy without recipes, layer reduction, entrypoi
 |------|-------------|
 | `--src-creds user:pass` | Source registry credentials |
 | `--dest-creds user:pass` | Destination registry credentials |
+| `--src-proxy URL\|direct` | Proxy used only for source registry operations |
+| `--dest-proxy URL\|direct` | Proxy used only for destination registry operations |
 | `--recipe path/to/recipe.yml` | Recipe file to apply (repeatable) |
 | `--debug` | Enable verbose output |
 | `--batch-file path/to/images.yml` | Run multiple copy jobs from a YAML file |
@@ -180,6 +182,18 @@ For a plain registry-to-registry copy without recipes, layer reduction, entrypoi
 | `--reduce-changes` | Preserve base layers and reduce recipe changes into one delta layer |
 | `--progress` | Render terminal progress bars |
 | `--progress-json` | Emit machine-readable progress events as JSONL |
+
+Proxy routing is directional. For example, pull an external image through a corporate Squid proxy while pushing directly to an internal registry:
+
+```bash
+oci-toolbox copy \
+  docker://registry.external.example/team/app:1.2 \
+  docker://registry.internal.example/team/app:1.2 \
+  --src-proxy http://proxy.example.com:8080 \
+  --dest-proxy direct
+```
+
+When a proxy flag is omitted, the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment behavior remains active. The special value `direct` disables environment proxies for that direction. Proxy routing covers manifest and digest checks, pulls, pushes, blob reuse, and remote tag operations. An HTTP proxy uses CONNECT for an HTTPS registry, so registry credentials and image data remain inside TLS unless the proxy performs TLS interception. Credentials embedded in a plain HTTP proxy URL are rejected; use an HTTPS proxy for authenticated proxy URLs.
 
 **Examples:**
 
@@ -574,6 +588,8 @@ oci-toolbox bundle publish bundle.yml \
   --progress
 ```
 
+`bundle publish` accepts the same independent `--src-proxy` and `--dest-proxy` routing as `copy`. This includes preflight inspection, selective-release digest reuse, copying, and retagging.
+
 `bundle publish` preflights all images before copying. A missing primary release tag is created, the same existing digest is treated as an idempotent retry, and an existing tag with another digest aborts the operation. Extra tags such as `stable` are movable aliases. The output file must not already exist. Git commit, tag, and push operations deliberately remain the responsibility of CI or the caller.
 
 #### Selective release from a base manifest
@@ -834,7 +850,8 @@ Cleanup works with unique manifest digests rather than counting aliases as separ
 oci-toolbox snapshot create \
   --namespace example \
   --output-dir ./snapshots \
-  --src-creds user:password
+  --src-creds user:password \
+  --src-proxy http://proxy.example.com:8080
 
 # Optional glob; * also crosses / and is matched against the full image reference.
 oci-toolbox snapshot create \
@@ -845,6 +862,7 @@ oci-toolbox snapshot create \
 oci-toolbox snapshot restore \
   --namespace example \
   --dest-creds user:password \
+  --dest-proxy direct \
   ./snapshots/example/20260728-120000.yml
 ```
 

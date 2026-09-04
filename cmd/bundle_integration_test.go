@@ -514,6 +514,7 @@ func saveBundleCommandState() func() {
 	oldReduceLayers, oldReduceChanges := reducelayers, reduceChanges
 	oldWrapEntrypoint, oldNoWrapEntrypoint := wrapEntrypoint, noWrapEntrypoint
 	oldSrcInsecure, oldDestInsecure := srcInsecure, destInsecure
+	oldSrcProxy, oldDestProxy := srcProxy, destProxy
 
 	return func() {
 		bundleOptions = oldBundleOptions
@@ -526,5 +527,6 @@ func saveBundleCommandState() func() {
 		reducelayers, reduceChanges = oldReduceLayers, oldReduceChanges
 		wrapEntrypoint, noWrapEntrypoint = oldWrapEntrypoint, oldNoWrapEntrypoint
 		srcInsecure, destInsecure = oldSrcInsecure, oldDestInsecure
+		srcProxy, destProxy = oldSrcProxy, oldDestProxy
 	}
 }

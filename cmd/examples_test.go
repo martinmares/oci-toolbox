@@ -15,6 +15,8 @@ func TestWriteExamplesPlain(t *testing.T) {
 	got := output.String()
 	for _, want := range []string{
 		"Batch copy",
+		"--src-proxy http://proxy.example.com:8080",
+		"--dest-proxy direct",
 		"oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure",
 		"--release-id RE_2026.08.10.01",
 		"--output releases/RE_2026.08.10.01-dev.yml",

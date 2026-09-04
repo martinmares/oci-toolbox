@@ -32,6 +32,8 @@ type CopyOptions struct {
 	DestCreds    string
 	SrcInsecure  bool
 	DestInsecure bool
+	SrcProxy     string
+	DestProxy    string
 	Progress     bool
 }
 
@@ -62,6 +64,7 @@ type BackupOptions struct {
 	ImagePattern string
 	SrcCreds     string
 	SrcInsecure  bool
+	SrcProxy     string
 	Now          func() time.Time
 	Stdout       io.Writer
 	Stderr       io.Writer
@@ -72,6 +75,7 @@ type RestoreOptions struct {
 	Namespace    string
 	DestCreds    string
 	DestInsecure bool
+	DestProxy    string
 	Stdout       io.Writer
 	Stderr       io.Writer
 }
@@ -129,7 +133,7 @@ func Backup(ctx context.Context, lister ImageLister, copier Copier, opts BackupO
 		partPath := filepath.Join(snapshotDir, "."+archive+".part")
 		fmt.Fprintf(opts.Stdout, "Backing up docker://%s -> oci-archive://%s\n", source, archivePath)
 		if err := copier.Copy(ctx, "docker://"+source, "oci-archive://"+partPath, CopyOptions{
-			SrcCreds: opts.SrcCreds, SrcInsecure: opts.SrcInsecure, Progress: true,
+			SrcCreds: opts.SrcCreds, SrcInsecure: opts.SrcInsecure, SrcProxy: opts.SrcProxy, Progress: true,
 		}); err != nil {
 			_ = os.Remove(partPath)
 			return manifestPath, fmt.Errorf("copying backup image %q: %w", source, err)
@@ -213,7 +217,7 @@ func Restore(ctx context.Context, copier Copier, opts RestoreOptions) error {
 		}
 		fmt.Fprintf(opts.Stdout, "Restoring %s%s -> docker://%s\n", sourceScheme, archivePath, image.Destination)
 		if err := copier.Copy(ctx, sourceScheme+archivePath, "docker://"+image.Destination, CopyOptions{
-			DestCreds: opts.DestCreds, DestInsecure: opts.DestInsecure, Progress: true,
+			DestCreds: opts.DestCreds, DestInsecure: opts.DestInsecure, DestProxy: opts.DestProxy, Progress: true,
 		}); err != nil {
 			return fmt.Errorf("restoring image %q: %w", image.Destination, err)
 		}

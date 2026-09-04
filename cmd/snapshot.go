@@ -20,6 +20,8 @@ type snapshotOptions struct {
 	destCreds  string
 	srcUnsafe  bool
 	destUnsafe bool
+	srcProxy   string
+	destProxy  string
 }
 
 type directCopier struct{}
@@ -30,6 +32,8 @@ func (directCopier) Copy(ctx context.Context, source, destination string, option
 		DestCreds:      options.DestCreds,
 		SrcInsecure:    options.SrcInsecure,
 		DestInsecure:   options.DestInsecure,
+		SrcProxy:       options.SrcProxy,
+		DestProxy:      options.DestProxy,
 		Progress:       options.Progress,
 		ProgressJSON:   false,
 		RecipePaths:    nil,
@@ -73,7 +77,7 @@ func newSnapshotCreateCommand(opts *snapshotOptions) *cobra.Command {
 			}
 			manifest, err := snapshot.Backup(cmd.Context(), client, directCopier{}, snapshot.BackupOptions{
 				Namespace: opts.namespace, OutputDir: opts.outputDir, ImagePattern: pattern,
-				SrcCreds: opts.srcCreds, SrcInsecure: opts.srcUnsafe,
+				SrcCreds: opts.srcCreds, SrcInsecure: opts.srcUnsafe, SrcProxy: opts.srcProxy,
 				Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(),
 			})
 			if err != nil {
@@ -89,6 +93,7 @@ func newSnapshotCreateCommand(opts *snapshotOptions) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.kubeUnsafe, "kube-insecure", false, "skip Kubernetes API TLS certificate verification")
 	cmd.Flags().StringVar(&opts.srcCreds, "src-creds", "", "source registry credentials user:password")
 	cmd.Flags().BoolVar(&opts.srcUnsafe, "src-insecure", false, "skip source registry TLS certificate verification")
+	cmd.Flags().StringVar(&opts.srcProxy, "src-proxy", "", "source registry proxy URL, or direct to bypass environment proxies")
 	return cmd
 }
 
@@ -103,7 +108,7 @@ func newSnapshotRestoreCommand(opts *snapshotOptions) *cobra.Command {
 			}
 			if err := snapshot.Restore(cmd.Context(), directCopier{}, snapshot.RestoreOptions{
 				ManifestPath: args[0], Namespace: opts.namespace,
-				DestCreds: opts.destCreds, DestInsecure: opts.destUnsafe,
+				DestCreds: opts.destCreds, DestInsecure: opts.destUnsafe, DestProxy: opts.destProxy,
 				Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(),
 			}); err != nil {
 				return err
@@ -114,6 +119,7 @@ func newSnapshotRestoreCommand(opts *snapshotOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.destCreds, "dest-creds", "", "destination registry credentials user:password")
 	cmd.Flags().BoolVar(&opts.destUnsafe, "dest-insecure", false, "skip destination registry TLS certificate verification")
+	cmd.Flags().StringVar(&opts.destProxy, "dest-proxy", "", "destination registry proxy URL, or direct to bypass environment proxies")
 	return cmd
 }
 

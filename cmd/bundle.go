@@ -37,6 +37,8 @@ var bundlePublishOptions struct {
 	destCreds        string
 	srcInsecure      bool
 	destInsecure     bool
+	srcProxy         string
+	destProxy        string
 	progress         bool
 	debug            bool
 	baseRelease      string
@@ -99,6 +101,12 @@ var bundlePublishCmd = &cobra.Command{
     --select zis-aq-bridge/application \
     --select zis-es-idx-view/application \
     --preserve-base-only \
+    --output releases/RE_2026.08.03.01.yml
+
+  oci-toolbox bundle publish bundles/stable.yml \
+    --release-id RE_2026.08.03.01 \
+    --src-proxy http://proxy.example.com:8080 \
+    --dest-proxy direct \
     --output releases/RE_2026.08.03.01.yml`,
 }
 
@@ -116,6 +124,8 @@ func init() {
 	bundlePublishCmd.Flags().StringVar(&bundlePublishOptions.destCreds, "dest-creds", "", "destination registry credentials user:password")
 	bundlePublishCmd.Flags().BoolVar(&bundlePublishOptions.srcInsecure, "src-insecure", false, "skip source registry TLS verification")
 	bundlePublishCmd.Flags().BoolVar(&bundlePublishOptions.destInsecure, "dest-insecure", false, "skip destination registry TLS verification")
+	bundlePublishCmd.Flags().StringVar(&bundlePublishOptions.srcProxy, "src-proxy", "", "source registry proxy URL, or direct to bypass environment proxies")
+	bundlePublishCmd.Flags().StringVar(&bundlePublishOptions.destProxy, "dest-proxy", "", "destination registry proxy URL, or direct to bypass environment proxies")
 	bundlePublishCmd.Flags().BoolVar(&bundlePublishOptions.progress, "progress", false, "show copy progress")
 	bundlePublishCmd.Flags().BoolVar(&bundlePublishOptions.debug, "debug", false, "enable verbose output")
 	bundlePublishCmd.Flags().StringVar(&bundlePublishOptions.baseRelease, "base-release", "", "base release manifest whose unselected image digests are reused")
@@ -211,8 +221,14 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	sourceOpts := registryOptions(bundlePublishOptions.srcCreds, bundlePublishOptions.srcInsecure)
-	targetOpts := registryOptions(bundlePublishOptions.destCreds, bundlePublishOptions.destInsecure)
+	sourceOpts, err := registryOptionsWithProxy(bundlePublishOptions.srcCreds, bundlePublishOptions.srcInsecure, bundlePublishOptions.srcProxy)
+	if err != nil {
+		return fmt.Errorf("source registry transport: %w", err)
+	}
+	targetOpts, err := registryOptionsWithProxy(bundlePublishOptions.destCreds, bundlePublishOptions.destInsecure, bundlePublishOptions.destProxy)
+	if err != nil {
+		return fmt.Errorf("destination registry transport: %w", err)
+	}
 
 	preflight := make([]publishPreflight, 0, len(plan.Images))
 	var preflightCounter *progress.Counter
@@ -275,6 +291,8 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 		DestCreds:     bundlePublishOptions.destCreds,
 		SrcInsecure:   bundlePublishOptions.srcInsecure,
 		DestInsecure:  bundlePublishOptions.destInsecure,
+		SrcProxy:      bundlePublishOptions.srcProxy,
+		DestProxy:     bundlePublishOptions.destProxy,
 		Progress:      bundlePublishOptions.progress,
 		Debug:         bundlePublishOptions.debug,
 		RecipePaths:   nil,
@@ -313,6 +331,7 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 			if item.FromBaseRelease {
 				itemCopyOpts.SrcCreds = bundlePublishOptions.destCreds
 				itemCopyOpts.SrcInsecure = bundlePublishOptions.destInsecure
+				itemCopyOpts.SrcProxy = bundlePublishOptions.destProxy
 			}
 			if err := runCopyOne(cmd.Context(), "docker://"+sourceDigestRef, "docker://"+item.TargetRef, label, item.ExtraTags, itemCopyOpts); err != nil {
 				return fmt.Errorf("publishing image %q: %w", item.ID, err)
@@ -398,11 +417,15 @@ func fetchOptionalBundleImage(refValue string, allowIndex bool, opts []remote.Op
 }
 
 func registryOptions(creds string, insecure bool) []remote.Option {
-	opts := auth.RemoteOptions(parseCreds(creds))
-	if insecure {
-		opts = append(opts, auth.InsecureTransport())
+	opts, err := registryOptionsWithProxy(creds, insecure, "")
+	if err != nil {
+		panic(err)
 	}
 	return opts
+}
+
+func registryOptionsWithProxy(creds string, insecure bool, proxy string) ([]remote.Option, error) {
+	return auth.RemoteOptionsWithTransport(parseCreds(creds), proxy, insecure)
 }
 
 func fetchImageManifest(refValue string, opts []remote.Option) (*remote.Descriptor, error) {
