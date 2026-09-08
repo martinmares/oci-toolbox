@@ -338,7 +338,7 @@ images:
 	if err := runBundlePublish(cmd, []string{bundlePath}); err != nil {
 		t.Fatalf("selective publish: %v", err)
 	}
-	for _, want := range []string{"preflight target 3/3: platform/sidecar", "3/3", "100%"} {
+	for _, want := range []string{"preflight target 3/3: platform/sidecar", "release tag 3/3: platform/sidecar", "3/3", "100%"} {
 		if !strings.Contains(selectiveProgress.String(), want) {
 			t.Fatalf("preflight progress does not contain %q: %q", want, selectiveProgress.String())
 		}

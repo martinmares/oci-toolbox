@@ -310,6 +310,20 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 		ExtraTags:    append([]string(nil), plan.ExtraTags...),
 		Images:       make([]bundle.ReleaseImage, 0, len(preflight)),
 	}
+	selectedTotal := 0
+	for _, entry := range preflight {
+		if !entry.item.FromBaseRelease {
+			selectedTotal++
+		}
+	}
+	selectedCurrent := 0
+	var releaseTagCounter *progress.Counter
+	if bundlePublishOptions.progress && baseRelease != nil {
+		releaseTagCounter = progress.NewCounter(len(preflight), "publish release tags", cmd.ErrOrStderr())
+		defer func() {
+			_ = releaseTagCounter.Exit()
+		}()
+	}
 
 	for i, entry := range preflight {
 		item := entry.item
@@ -327,6 +341,10 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 			slog.Info("retagged reused image without transferring layers", "image", item.ID, "destination", item.TargetRef)
 		} else {
 			label := fmt.Sprintf("bundle %d/%d", i+1, len(preflight))
+			if baseRelease != nil && !item.FromBaseRelease {
+				selectedCurrent++
+				label = fmt.Sprintf("selected image %d/%d", selectedCurrent, selectedTotal)
+			}
 			itemCopyOpts := copyOpts
 			if item.FromBaseRelease {
 				itemCopyOpts.SrcCreds = bundlePublishOptions.destCreds
@@ -348,6 +366,13 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 				item.ID, targetDesc.Digest, entry.sourceDigest,
 			)
 		}
+		if releaseTagCounter != nil {
+			selector := item.AppName + "/" + item.ContainerName
+			releaseTagCounter.Describe(fmt.Sprintf("release tag %d/%d: %s", i+1, len(preflight), selector))
+			if err := releaseTagCounter.Advance(); err != nil {
+				return fmt.Errorf("updating release tag progress: %w", err)
+			}
+		}
 		manifest.Images = append(manifest.Images, bundle.ReleaseImage{
 			ID:            item.ID,
 			AppName:       item.AppName,
@@ -364,6 +389,10 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 			Platform:  entry.platform,
 		})
 	}
+	if err := releaseTagCounter.Finish(); err != nil {
+		return fmt.Errorf("finishing release tag progress: %w", err)
+	}
+	releaseTagCounter = nil
 
 	if err := writeReleaseManifest(cmd, bundlePublishOptions.output, manifest); err != nil {
 		return err
