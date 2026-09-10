@@ -340,10 +340,10 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 			}
 			slog.Info("retagged reused image without transferring layers", "image", item.ID, "destination", item.TargetRef)
 		} else {
-			label := fmt.Sprintf("bundle %d/%d", i+1, len(preflight))
+			label := bundleImageProgressLabel("bundle", i+1, len(preflight), item.ID)
 			if baseRelease != nil && !item.FromBaseRelease {
 				selectedCurrent++
-				label = fmt.Sprintf("selected image %d/%d", selectedCurrent, selectedTotal)
+				label = bundleImageProgressLabel("selected image", selectedCurrent, selectedTotal, item.ID)
 			}
 			itemCopyOpts := copyOpts
 			if item.FromBaseRelease {
@@ -399,6 +399,10 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "release manifest written to %s\n", bundlePublishOptions.output)
 	return nil
+}
+
+func bundleImageProgressLabel(kind string, current, total int, imageID string) string {
+	return fmt.Sprintf("%s %d/%d (%s)", kind, current, total, imageID)
 }
 
 func sameImageRepository(a, b string) bool {
