@@ -169,7 +169,7 @@ For a plain registry-to-registry copy without recipes, layer reduction, entrypoi
 | `--src-base registry/path` | Source registry/repository base replaced in release-manifest mode; defaults to `registry_base` |
 | `--dest-base registry/path` | Required destination registry/repository base in release-manifest mode |
 | `--output path/to/release.yml` | Write a release manifest for copied destination images |
-| `--release-id ID` | Release ID for `--batch-file` output; inferred from a common destination tag when omitted |
+| `--release-id ID` | Release ID for `--batch-file` output, or an override for destination tags and output in `--release-manifest` mode |
 | `--retries count` | Additional attempts for transient network failures; default `4`, use `0` to disable |
 | `--retry-initial-delay duration` | Delay before the first retry; default `2s` |
 | `--retry-max-delay duration` | Maximum exponential retry delay; default `30s` |
@@ -294,7 +294,8 @@ oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
   --src-base quay.example.com/nac-test \
   --dest-base artifactory.example.com/nac-test \
-  --output releases/2026.06.25.01-replica.yml \
+  --release-id RE_2026.09.10.02 \
+  --output releases/RE_2026.09.10.02-replica.yml \
   --src-insecure \
   --dest-insecure \
   --retries 5 \
@@ -303,13 +304,13 @@ oci-toolbox copy \
   --progress
 ```
 
-Every source uses the manifest's `image@digest`. The source base is replaced with `--dest-base`, preserving the remaining repository path, and every destination receives the manifest's `release_id` as its tag. When `--src-base` is omitted, `registry_base` from the manifest is used; if neither is available, the command fails before copying. Images outside the source base and duplicate destinations are rejected. Manifest `tag` and `extra_tags` values are intentionally not copied. The former `--src-prefix` and `--dest-prefix` flags were renamed; using either old spelling fails with a message pointing to `--src-base` or `--dest-base`.
+Every source uses the manifest's `image@digest`. The source base is replaced with `--dest-base`, preserving the remaining repository path. By default every destination receives the input manifest's `release_id` as its tag; `--release-id` overrides that destination tag without changing which source digest is copied. When `--src-base` is omitted, `registry_base` from the manifest is used; if neither is available, the command fails before copying. Images outside the source base and duplicate destinations are rejected. Manifest `tag` and `extra_tags` values are intentionally not copied. The former `--src-prefix` and `--dest-prefix` flags were renamed; using either old spelling fails with a message pointing to `--src-base` or `--dest-base`.
 
 `--release-manifest`, `--batch-file`, and positional `SOURCE DESTINATION` are separate input modes. Credentials, TLS settings, progress, debug output, and `--continue-on-error` apply to every generated copy job.
 
 Every copied destination digest is verified against the release manifest. Multi-platform image indexes are copied between registries without selecting a child platform. Recipes, layer reduction, entrypoint wrapping, `--dest-no-reuse`, and `--dest-tag` are not supported in release-manifest mode because they could change or partially materialize locked content.
 
-When `--output` is supplied, the file is written atomically only after every copy and digest verification succeeds. The new manifest keeps the original deployment selectors, platforms, bundle metadata, and release ID; it points `registry_base` and each `image` to the destination and records the previous release image in each item's `source`. Existing output files are never overwritten. Without `--output`, the command only copies the images.
+When `--output` is supplied, the file is written atomically only after every copy and digest verification succeeds. The new manifest keeps the original deployment selectors, platforms, and bundle metadata; it uses the overridden release ID when `--release-id` was supplied, points `registry_base` and each `image` to the destination, and records the previous release image in each item's `source`. Existing output files are never overwritten. Without `--output`, the command still applies `--release-id` to destination tags but does not write a manifest.
 
 Transient network failures such as timeouts, connection resets, broken pipes, temporary registry responses, and unexpected EOFs retry the current image with exponential backoff. The default four retries wait `2s`, `4s`, `8s`, and `16s`. Completed batch items are not repeated, and authentication, validation, digest, and other permanent errors fail immediately. `--continue-on-error` is applied only after an item exhausts its retries.
 

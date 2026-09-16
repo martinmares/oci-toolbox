@@ -169,7 +169,7 @@ U čisté kopie registry→registry bez recipe, redukce vrstev, entrypoint wrapp
 | `--src-base registry/cesta` | Zdrojový registry/repository základ nahrazený v release-manifest režimu; výchozí je `registry_base` |
 | `--dest-base registry/cesta` | Povinný cílový registry/repository základ v release-manifest režimu |
 | `--output cesta/k/release.yml` | Zapíše release manifest pro zkopírované cílové image |
-| `--release-id ID` | Release ID pro výstup z `--batch-file`; bez něj se odvodí ze společného cílového tagu |
+| `--release-id ID` | Release ID pro výstup z `--batch-file`, nebo přepsání cílových tagů a výstupu v režimu `--release-manifest` |
 | `--retries počet` | Dodatečné pokusy při přechodných síťových chybách; výchozí `4`, hodnota `0` retry vypne |
 | `--retry-initial-delay doba` | Prodleva před prvním retry; výchozí `2s` |
 | `--retry-max-delay doba` | Maximální exponenciální prodleva; výchozí `30s` |
@@ -294,7 +294,8 @@ oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
   --src-base quay.example.com/nac-test \
   --dest-base artifactory.example.com/nac-test \
-  --output releases/2026.06.25.01-replica.yml \
+  --release-id RE_2026.09.10.02 \
+  --output releases/RE_2026.09.10.02-replica.yml \
   --src-insecure \
   --dest-insecure \
   --retries 5 \
@@ -303,13 +304,13 @@ oci-toolbox copy \
   --progress
 ```
 
-Každý zdroj používá `image@digest` z manifestu. Zdrojový základ se nahradí hodnotou `--dest-base`, zbývající repository cesta se zachová a každý cíl dostane jako tag hodnotu `release_id`. Pokud není zadán `--src-base`, použije se `registry_base` z manifestu; pokud není dostupné ani jedno, příkaz skončí před kopírováním. Image mimo zdrojový základ a duplicitní cíle jsou odmítnuty. Hodnoty `tag` a `extra_tags` z manifestu se záměrně nekopírují. Původní flagy `--src-prefix` a `--dest-prefix` byly přejmenovány; jejich použití skončí chybou, která odkáže na `--src-base`, respektive `--dest-base`.
+Každý zdroj používá `image@digest` z manifestu. Zdrojový základ se nahradí hodnotou `--dest-base` a zbývající repository cesta se zachová. Ve výchozím stavu dostane každý cíl jako tag `release_id` ze vstupního manifestu; `--release-id` tento cílový tag přepíše, aniž by změnil kopírovaný source digest. Pokud není zadán `--src-base`, použije se `registry_base` z manifestu; pokud není dostupné ani jedno, příkaz skončí před kopírováním. Image mimo zdrojový základ a duplicitní cíle jsou odmítnuty. Hodnoty `tag` a `extra_tags` z manifestu se záměrně nekopírují. Původní flagy `--src-prefix` a `--dest-prefix` byly přejmenovány; jejich použití skončí chybou, která odkáže na `--src-base`, respektive `--dest-base`.
 
 `--release-manifest`, `--batch-file` a poziční `SOURCE DESTINATION` jsou samostatné vstupní režimy. Credentials, TLS nastavení, progress, debug výstup a `--continue-on-error` se aplikují na každý vygenerovaný copy job.
 
 Každý zkopírovaný cílový digest se ověří proti release manifestu. Multi-platform image indexy se mezi registry kopírují bez výběru jedné platformy. Recipe, redukce vrstev, entrypoint wrapping, `--dest-no-reuse` a `--dest-tag` nejsou v release-manifest režimu podporovány, protože by mohly uzamčený obsah změnit nebo materializovat jen částečně.
 
-Při použití `--output` se soubor zapíše atomicky až po úspěšném dokončení všech kopií a ověření digestů. Nový manifest zachová původní deployment selektory, platformy, bundle metadata a release ID; `registry_base` a jednotlivé `image` přesměruje na cíl a předchozí release image zaznamená do `source` každé položky. Existující výstupní soubor se nikdy nepřepíše. Bez `--output` příkaz pouze zkopíruje images.
+Při použití `--output` se soubor zapíše atomicky až po úspěšném dokončení všech kopií a ověření digestů. Nový manifest zachová původní deployment selektory, platformy a bundle metadata; při použití `--release-id` použije nové release ID, `registry_base` a jednotlivé `image` přesměruje na cíl a předchozí release image zaznamená do `source` každé položky. Existující výstupní soubor se nikdy nepřepíše. Bez `--output` se `--release-id` stále použije pro cílové tagy, pouze se nezapíše manifest.
 
 Přechodné síťové chyby jako timeout, reset spojení, broken pipe, dočasná chyba registry nebo unexpected EOF zopakují aktuální image s exponenciálním backoffem. Výchozí čtyři retry čekají `2s`, `4s`, `8s` a `16s`. Dokončené batch položky se neopakují a autentizační, validační, digestové ani jiné trvalé chyby se neopakují vůbec. `--continue-on-error` se uplatní až poté, co položka vyčerpá všechny retry pokusy.
 

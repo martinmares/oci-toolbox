@@ -49,6 +49,64 @@ func TestCopyArgsAllowsBatchOutput(t *testing.T) {
 	}
 }
 
+func TestCopyArgsAllowsReleaseManifestReleaseIDWithoutOutput(t *testing.T) {
+	oldBatchFile, oldReleaseManifest := batchFile, releaseManifest
+	oldOutput, oldReleaseID := copyOutput, copyReleaseID
+	oldSrcBase, oldDestBase := srcBase, destBase
+	oldFromRef, oldToRef := fromRef, toRef
+	defer func() {
+		batchFile, releaseManifest = oldBatchFile, oldReleaseManifest
+		copyOutput, copyReleaseID = oldOutput, oldReleaseID
+		srcBase, destBase = oldSrcBase, oldDestBase
+		fromRef, toRef = oldFromRef, oldToRef
+	}()
+
+	batchFile = ""
+	releaseManifest = "release.yml"
+	copyOutput = ""
+	copyReleaseID = "RE_2026.09.10.02"
+	srcBase = ""
+	destBase = "registry.example.com/archive"
+	fromRef = ""
+	toRef = ""
+
+	if err := copyArgs(nil, nil); err != nil {
+		t.Fatalf("release manifest release ID override rejected: %v", err)
+	}
+}
+
+func TestCopyArgsReleaseIDModeValidation(t *testing.T) {
+	oldBatchFile, oldReleaseManifest := batchFile, releaseManifest
+	oldOutput, oldReleaseID := copyOutput, copyReleaseID
+	oldSrcBase, oldDestBase := srcBase, destBase
+	oldFromRef, oldToRef := fromRef, toRef
+	defer func() {
+		batchFile, releaseManifest = oldBatchFile, oldReleaseManifest
+		copyOutput, copyReleaseID = oldOutput, oldReleaseID
+		srcBase, destBase = oldSrcBase, oldDestBase
+		fromRef, toRef = oldFromRef, oldToRef
+	}()
+
+	copyReleaseID = "RE_2026.09.10.02"
+	srcBase = ""
+	destBase = ""
+	fromRef = ""
+	toRef = ""
+
+	batchFile = "images.yml"
+	releaseManifest = ""
+	copyOutput = ""
+	if err := copyArgs(nil, nil); err == nil || !strings.Contains(err.Error(), "--release-id requires --output") {
+		t.Fatalf("batch error = %v, want output requirement", err)
+	}
+
+	batchFile = ""
+	releaseManifest = ""
+	if err := copyArgs(nil, []string{"source", "destination"}); err == nil || !strings.Contains(err.Error(), "--release-id requires --batch-file or --release-manifest") {
+		t.Fatalf("positional error = %v, want input mode requirement", err)
+	}
+}
+
 func TestLoadCopyBatchAcceptsSourceAlias(t *testing.T) {
 	path := writeBatchFile(t, `
 copy:
@@ -213,7 +271,7 @@ images:
     digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 `)
 
-	plan, err := loadReleaseCopyPlan(path, "", "mirror.example.com/archive")
+	plan, err := loadReleaseCopyPlan(path, "", "mirror.example.com/archive", "")
 	if err != nil {
 		t.Fatalf("loadReleaseCopyPlan: %v", err)
 	}
@@ -261,6 +319,56 @@ images:
 	}
 }
 
+func TestLoadReleaseCopyPlanOverridesDestinationReleaseID(t *testing.T) {
+	path := writeReleaseFile(t, `
+release_id: 2026.06.25.01
+registry_base: registry.example.com/release
+images:
+  - id: api
+    app_name: api
+    container_name: application
+    image: registry.example.com/release/team/api
+    tag: original-tag
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+`)
+
+	plan, err := loadReleaseCopyPlan(path, "", "mirror.example.com/archive", "RE_2026.09.10.02")
+	if err != nil {
+		t.Fatalf("loadReleaseCopyPlan: %v", err)
+	}
+	if got, want := plan.Items[0].source(), "registry.example.com/release/team/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"; got != want {
+		t.Fatalf("source = %q, want immutable original %q", got, want)
+	}
+	if got, want := plan.Items[0].target(), "mirror.example.com/archive/team/api:RE_2026.09.10.02"; got != want {
+		t.Fatalf("destination = %q, want %q", got, want)
+	}
+	if got := plan.Manifest.ReleaseID; got != "RE_2026.09.10.02" {
+		t.Fatalf("output release ID = %q", got)
+	}
+	image := plan.Manifest.Images[0]
+	if image.Tag != "RE_2026.09.10.02" {
+		t.Fatalf("output image tag = %q", image.Tag)
+	}
+	if image.Source == nil || image.Source.Tag != "original-tag" {
+		t.Fatalf("output source metadata = %#v", image.Source)
+	}
+}
+
+func TestLoadReleaseCopyPlanRejectsInvalidReleaseIDOverride(t *testing.T) {
+	path := writeReleaseFile(t, `
+release_id: release-1
+registry_base: registry.example.com/release
+images:
+  - image: registry.example.com/release/api
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+`)
+
+	_, err := loadReleaseCopyPlan(path, "", "mirror.example.com/release", "invalid release id")
+	if err == nil || !strings.Contains(err.Error(), "invalid --release-id") {
+		t.Fatalf("error = %v, want invalid override error", err)
+	}
+}
+
 func TestLoadReleaseCopyPlanRequiresSourceBaseWithoutRegistryBase(t *testing.T) {
 	path := writeReleaseFile(t, `
 release_id: release-1
@@ -270,7 +378,7 @@ images:
     digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 `)
 
-	_, err := loadReleaseCopyPlan(path, "", "mirror.example.com/release")
+	_, err := loadReleaseCopyPlan(path, "", "mirror.example.com/release", "")
 	if err == nil || !strings.Contains(err.Error(), "--src-base is required") {
 		t.Fatalf("error = %v", err)
 	}
@@ -289,6 +397,7 @@ images:
 		path,
 		"https://registry.example.com/release/",
 		"docker://mirror.example.com/release/",
+		"",
 	)
 	if err == nil || !strings.Contains(err.Error(), "outside source base") {
 		t.Fatalf("error = %v", err)
@@ -323,7 +432,7 @@ images:
     digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 `)
 
-	_, err := loadReleaseCopyPlan(path, "registry.example.com/release", "mirror.example.com/release")
+	_, err := loadReleaseCopyPlan(path, "registry.example.com/release", "mirror.example.com/release", "")
 	if err == nil || !strings.Contains(err.Error(), "field unexpected not found") {
 		t.Fatalf("error = %v", err)
 	}

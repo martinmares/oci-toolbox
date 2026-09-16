@@ -125,7 +125,7 @@ var copyCmd = &cobra.Command{
   oci-toolbox copy --progress --recipe inject-tool.yml docker://src/repo:tag docker://dst/repo:tag
   oci-toolbox copy --src-proxy http://proxy.example.com:8080 --dest-proxy direct docker://external/repo:tag docker://internal/repo:tag
   oci-toolbox copy --batch-file images.yml --release-id RE_2026.08.10.01 --output release.yml --src-insecure --dest-insecure
-  oci-toolbox copy --release-manifest release.yml --src-base registry.example.com/team --dest-base mirror.example.com/team --output mirrored-release.yml`,
+  oci-toolbox copy --release-manifest release.yml --src-base registry.example.com/team --dest-base mirror.example.com/team --release-id RE_2026.09.10.02 --output mirrored-release.yml`,
 	RunE: runCopy,
 }
 
@@ -148,7 +148,7 @@ func init() {
 	_ = copyCmd.Flags().MarkHidden("src-prefix")
 	_ = copyCmd.Flags().MarkHidden("dest-prefix")
 	copyCmd.Flags().StringVarP(&copyOutput, "output", "o", "", "write a release manifest for copied destination images")
-	copyCmd.Flags().StringVar(&copyReleaseID, "release-id", "", "release identifier for --batch-file output; inferred from a common destination tag when omitted")
+	copyCmd.Flags().StringVar(&copyReleaseID, "release-id", "", "release identifier for batch output or destination tags in release-manifest mode")
 	copyCmd.Flags().BoolVar(&continueOnError, "continue-on-error", false, "continue batch processing after a copy fails")
 	copyCmd.Flags().BoolVar(&wrapEntrypoint, "wrap-entrypoint", false, "wrap SOURCE entrypoint and command for all shadow recipe steps")
 	copyCmd.Flags().BoolVar(&noWrapEntrypoint, "no-wrap-entrypoint", false, "do not wrap the original entrypoint for any shadow recipe step")
@@ -194,10 +194,10 @@ func copyArgs(_ *cobra.Command, args []string) error {
 	if copyOutput != "" && batchFile == "" && releaseManifest == "" {
 		return fmt.Errorf("--output requires --batch-file or --release-manifest")
 	}
-	if copyReleaseID != "" && batchFile == "" {
-		return fmt.Errorf("--release-id requires --batch-file")
+	if copyReleaseID != "" && batchFile == "" && releaseManifest == "" {
+		return fmt.Errorf("--release-id requires --batch-file or --release-manifest")
 	}
-	if copyReleaseID != "" && copyOutput == "" {
+	if copyReleaseID != "" && batchFile != "" && copyOutput == "" {
 		return fmt.Errorf("--release-id requires --output")
 	}
 	if batchFile != "" {
@@ -304,7 +304,7 @@ func runCopy(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
-		plan, err := loadReleaseCopyPlan(releaseManifest, srcBase, destBase)
+		plan, err := loadReleaseCopyPlan(releaseManifest, srcBase, destBase, copyReleaseID)
 		if err != nil {
 			return err
 		}
@@ -618,7 +618,7 @@ func commonReleaseRegistryBase(images []bundle.ReleaseImage) string {
 	return strings.Join(common, "/")
 }
 
-func loadReleaseCopyPlan(path, sourceBase, targetBase string) (*releaseCopyPlan, error) {
+func loadReleaseCopyPlan(path, sourceBase, targetBase, requestedReleaseID string) (*releaseCopyPlan, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading release manifest %q: %w", path, err)
@@ -639,12 +639,18 @@ func loadReleaseCopyPlan(path, sourceBase, targetBase string) (*releaseCopyPlan,
 		return nil, fmt.Errorf("parsing release manifest %q: %w", path, err)
 	}
 
-	releaseID := strings.TrimSpace(manifest.ReleaseID)
-	if releaseID == "" {
+	manifestReleaseID := strings.TrimSpace(manifest.ReleaseID)
+	if manifestReleaseID == "" {
 		return nil, fmt.Errorf("release manifest %q has no release_id", path)
 	}
-	if _, err := name.NewTag("example.invalid/repository:"+releaseID, name.WeakValidation); err != nil {
-		return nil, fmt.Errorf("release manifest %q has invalid release_id %q: %w", path, releaseID, err)
+	if _, err := name.NewTag("example.invalid/repository:"+manifestReleaseID, name.WeakValidation); err != nil {
+		return nil, fmt.Errorf("release manifest %q has invalid release_id %q: %w", path, manifestReleaseID, err)
+	}
+	releaseID := strings.TrimSpace(requestedReleaseID)
+	if releaseID == "" {
+		releaseID = manifestReleaseID
+	} else if _, err := name.NewTag("example.invalid/repository:"+releaseID, name.WeakValidation); err != nil {
+		return nil, fmt.Errorf("invalid --release-id %q: %w", releaseID, err)
 	}
 	if len(manifest.Images) == 0 {
 		return nil, fmt.Errorf("release manifest %q has no images", path)

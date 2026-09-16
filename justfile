@@ -8,6 +8,8 @@ date := `date -u +%Y-%m-%dT%H:%M:%SZ`
 # This also refreshes checksums, runs tests, and rebuilds the embedded binary.
 upgrade-modules:
     go get -u ./...
+    # kube-openapi has no coordinated release tags; use the exact revision required by the selected Kubernetes modules.
+    k8s_version="$(go list -m k8s.io/apimachinery | awk '{print $2}')"; kube_openapi_version="$(awk '$1 == "k8s.io/kube-openapi" { print $2 }' "$(go env GOMODCACHE)/cache/download/k8s.io/apimachinery/@v/${k8s_version}.mod")"; test -n "${kube_openapi_version}"; go get "k8s.io/kube-openapi@${kube_openapi_version}"
     go mod tidy
     cd internal/shadow/extractor && go get -u ./... && go mod tidy
     go test ./...

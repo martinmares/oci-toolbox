@@ -57,7 +57,8 @@ oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
   --src-base quay.example.com/nac-test \
   --dest-base artifactory.example.com/nac-test \
-  --output releases/2026.06.25.01-replica.yml \
+  --release-id RE_2026.09.10.02 \
+  --output releases/RE_2026.09.10.02-replica.yml \
   --src-insecure \
   --dest-insecure \
   --retries 5 \
