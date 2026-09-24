@@ -14,46 +14,40 @@ func TestWriteExamplesPlain(t *testing.T) {
 
 	got := output.String()
 	for _, want := range []string{
-		"Batch copy",
-		"--src-proxy http://proxy.example.com:8080",
-		"--dest-proxy direct",
-		"oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure",
-		"--release-id RE_2026.08.10.01",
-		"--output releases/RE_2026.08.10.01-dev.yml",
-		"# images.yml",
-		"  - src: registry.example.com/team/config:release-1.0",
-		"    dest: registry.example.com/team/ticket:test-latest",
-		"Copy a release manifest",
-		"--release-manifest releases/2026.06.25.01.yml",
-		"--dest-base artifactory.example.com/nac-test",
-		"--release-id RE_2026.09.10.02",
-		"--output releases/RE_2026.09.10.02-replica.yml",
-		"--retry-max-delay 30s",
-		"Publish an image bundle",
-		"oci-toolbox bundle publish bundle.yml",
-		"Publish a selective release",
-		"--base-release releases/RE_2026.08.01.01.yml",
-		"--select zis-aq-bridge/application",
-		"--select-file selected-images.yml",
-		"--preserve-base-only",
-		"Reconstruct a release manifest",
-		"oci-toolbox release reconstruct",
-		"Convert a release manifest to a bundle",
-		"oci-toolbox release to-bundle releases/RE_2026.08.10.01.yml",
-		"--source-mode tag",
-		"Inspect, compare, and verify releases",
-		"oci-toolbox release selectors releases/current.yml --format plain",
-		"oci-toolbox release compare releases/previous.yml releases/current.yml",
-		"oci-toolbox release verify releases/current.yml",
-		"Inspect and clean a registry",
-		"oci-toolbox registry cleanup",
-		"Snapshot Kubernetes deployment images",
-		"oci-toolbox snapshot create",
-		"Discover Spring Boot configuration",
-		"oci-toolbox spring-config discover",
+		"OCI-TOOLBOX COMMAND EXAMPLES",
+		"Commands are marked SHELL; external files are marked FILE.",
+		"## COPY",
+		"  › Batch copy",
+		"    FILE · images.yml (YAML)",
+		"        copy:",
+		"    SHELL",
+		"      oci-toolbox copy --batch-file images.yml \\",
+		"      --release-id RE_2026.09.10.02 \\",
+		"## BUNDLE VALIDATE",
+		"      oci-toolbox bundle validate bundle.yml",
+		"## BUNDLE PLAN",
+		"## BUNDLE PUBLISH",
+		"      --preserve-base-only \\",
+		"## RELEASE RECONSTRUCT",
+		"## RELEASE TO-BUNDLE",
+		"      --source-mode tag \\",
+		"## RELEASE SELECTORS",
+		"## RELEASE COMPARE",
+		"## RELEASE VERIFY",
+		"## REGISTRY INFO",
+		"    FILE · oci-toolbox-registry.yml (YAML)",
+		"## REGISTRY COPY-PLAN",
+		"## REGISTRY LIST-REPOSITORIES",
+		"## REGISTRY CLEANUP",
+		"## SNAPSHOT CREATE",
+		"## SNAPSHOT RESTORE",
+		"## SPRING-CONFIG DISCOVER",
 		"manifest.svg",
-		"--include 'config/*.yml'",
-		"--reduce-changes",
+		"## TAG-EXISTING",
+		"## INSPECT",
+		"## TREE",
+		"## LS",
+		"## CAT",
 		"action: use-base",
 		"action: shadow",
 		"action: replace-file",
@@ -68,6 +62,13 @@ func TestWriteExamplesPlain(t *testing.T) {
 	if strings.Contains(got, "\x1b[") {
 		t.Errorf("plain output contains ANSI escape sequence: %q", got)
 	}
+
+	fileLabel := strings.Index(got, "FILE · images.yml (YAML)")
+	fileContent := strings.Index(got, "        copy:")
+	shellLabel := strings.Index(got[fileContent:], "SHELL")
+	if fileLabel < 0 || fileContent < fileLabel || shellLabel < 0 {
+		t.Fatalf("batch example does not clearly separate file and shell blocks")
+	}
 }
 
 func TestWriteExamplesColor(t *testing.T) {
@@ -77,17 +78,35 @@ func TestWriteExamplesColor(t *testing.T) {
 	}
 
 	got := output.String()
-	for _, want := range []string{ansiBold + ansiCyan + "Quick copy", ansiGreen + "oci-toolbox copy", ansiYellow + "src:"} {
+	for _, want := range []string{
+		ansiBold + ansiCyan + "OCI-TOOLBOX COMMAND EXAMPLES" + ansiReset,
+		ansiBold + ansiCyan + "## COPY" + ansiReset,
+		ansiBold + ansiYellow + "› Batch copy" + ansiReset,
+		ansiBold + ansiGreen + "SHELL" + ansiReset,
+		ansiGreen + "      oci-toolbox copy --batch-file images.yml \\" + ansiReset,
+		ansiBold + ansiBlue + "FILE · images.yml (YAML)" + ansiReset,
+		ansiBlue + "        copy:" + ansiReset,
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("color output does not contain %q", want)
 		}
 	}
-	for _, want := range []string{
-		ansiGreen + "  --release-id RE_2026.07.28.01 \\" + ansiReset,
-		ansiGreen + "  ./snapshots/example/20260728-120000.yml" + ansiReset,
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("continued command line is not green: missing %q", want)
+}
+
+func TestExamplesCatalogHasUniqueCommandsAndCompleteEntries(t *testing.T) {
+	seen := make(map[string]struct{}, len(examplesCatalog))
+	for _, command := range examplesCatalog {
+		if command.Command == "" || command.Description == "" || len(command.Examples) == 0 {
+			t.Fatalf("incomplete command section: %#v", command)
+		}
+		if _, exists := seen[command.Command]; exists {
+			t.Fatalf("duplicate command section %q", command.Command)
+		}
+		seen[command.Command] = struct{}{}
+		for _, example := range command.Examples {
+			if example.Title == "" || (example.Shell == "" && len(example.Files) == 0) {
+				t.Fatalf("incomplete example in %q: %#v", command.Command, example)
+			}
 		}
 	}
 }

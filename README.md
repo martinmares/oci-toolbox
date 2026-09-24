@@ -529,7 +529,7 @@ The output may contain credentials. Output directories use mode `0700` and extra
 oci-toolbox examples
 ```
 
-Shows a command cookbook directly in the terminal: ordinary image copy, batch copy with the complete `images.yml` structure, and complete recipe examples for a Java application, tool and configuration patching, rebasing, artifact extraction, unpacking, `shadow`, permissions, metadata, and layer reduction.
+Shows a structured command cookbook directly in the terminal. Every command has a prominent heading and description followed by named variants. Shell commands and required external files such as bundle, batch, registry configuration, and recipe YAML are rendered as separate blocks.
 
 ```bash
 oci-toolbox examples
@@ -538,7 +538,7 @@ oci-toolbox examples
 oci-toolbox help examples
 ```
 
-When stdout is a terminal, commands, YAML keys, comments, and section headings are colorized. Piping or redirecting the output produces plain text, so this is safe for `oci-toolbox examples | less` and `oci-toolbox examples > examples.txt`.
+When stdout is a terminal, command headings, variant names, shell blocks, and external file blocks use distinct colors. Piping or redirecting the output preserves the same hierarchy as plain text, so this is safe for `oci-toolbox examples | less` and `oci-toolbox examples > examples.txt`.
 
 ### bundle
 

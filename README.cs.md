@@ -529,7 +529,7 @@ Výstup může obsahovat credentials. Výstupní adresář používá práva `07
 oci-toolbox examples
 ```
 
-Vypíše přímo v terminálu kuchařku příkazů: běžné kopírování image, batch copy včetně kompletní struktury `images.yml` a kompletní recipe pro Java aplikaci, patch nástrojů a konfigurace, rebasing, extrakci artifactu, rozbalení archivu, `shadow`, práva, metadata a redukci vrstev.
+Vypíše přímo v terminálu strukturovanou kuchařku. Každý příkaz má výraznou hlavičku a popis, pod kterými jsou pojmenované jednotlivé varianty. Shell příkazy a potřebné externí soubory, například bundle, batch, registry konfigurace a recipe YAML, jsou zobrazené jako samostatné bloky.
 
 ```bash
 oci-toolbox examples
@@ -538,7 +538,7 @@ oci-toolbox examples
 oci-toolbox help examples
 ```
 
-Pokud výstup míří do terminálu, příkazy, YAML klíče, komentáře a nadpisy jsou barevně zvýrazněné. Při pipe nebo přesměrování se vypíše čistý text, takže funguje i `oci-toolbox examples | less` a `oci-toolbox examples > examples.txt`.
+Pokud výstup míří do terminálu, hlavičky příkazů, názvy variant, shell bloky a bloky externích souborů používají odlišné barvy. Při pipe nebo přesměrování se stejná hierarchie zachová v čistém textu, takže funguje i `oci-toolbox examples | less` a `oci-toolbox examples > examples.txt`.
 
 ### bundle
 

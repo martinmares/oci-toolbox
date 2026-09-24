@@ -22,38 +22,63 @@ func init() {
 	rootCmd.AddCommand(examplesCmd)
 }
 
-func writeExamples(w io.Writer, color bool) error {
-	section(w, "Quick copy", color)
-	codeBlock(w, `# Copy an image unchanged.
-oci-toolbox copy docker://registry.example.com/team/app:1.2 docker://registry.example.com/team/app:1.2-copy`, color)
-	fmt.Fprintln(w)
-	codeBlock(w, `# Pull through a corporate proxy and push directly to an internal registry.
-oci-toolbox copy \
+type exampleFile struct {
+	Name    string
+	Format  string
+	Content string
+}
+
+type commandExample struct {
+	Title       string
+	Description string
+	Shell       string
+	Files       []exampleFile
+}
+
+type commandExamples struct {
+	Command     string
+	Description string
+	Examples    []commandExample
+}
+
+var examplesCatalog = []commandExamples{
+	{
+		Command:     "copy",
+		Description: "Copy OCI images, mirror releases, or apply filesystem recipes.",
+		Examples: []commandExample{
+			{
+				Title: "Direct registry copy",
+				Shell: "oci-toolbox copy docker://registry.example.com/team/app:1.2 " +
+					"docker://registry.example.com/team/app:1.2-copy",
+			},
+			{
+				Title:       "Different proxy policy for source and destination",
+				Description: "Pull through a proxy and connect directly to the internal destination registry.",
+				Shell: `oci-toolbox copy \
   docker://registry.external.example/team/app:1.2 \
   docker://registry.internal.example/team/app:1.2 \
   --src-proxy http://proxy.example.com:8080 \
-  --dest-proxy direct`, color)
-
-	section(w, "Batch copy", color)
-	codeBlock(w, `# Copy every image listed in images.yml. Both registries use an insecure TLS connection.
-oci-toolbox copy --batch-file images.yml --src-insecure --dest-insecure`, color)
-	fmt.Fprintln(w)
-	codeBlock(w, `# Copy the batch and record actual destination digests in a release manifest.
-oci-toolbox copy --batch-file images.yml \
-  --release-id RE_2026.08.10.01 \
-  --output releases/RE_2026.08.10.01-dev.yml \
-  --src-insecure --dest-insecure --progress`, color)
-	fmt.Fprintln(w)
-	codeBlock(w, `# images.yml
-copy:
+  --dest-proxy direct`,
+			},
+			{
+				Title:       "Batch copy",
+				Description: "Copy all declared images and record actual destination digests in a release manifest.",
+				Files: []exampleFile{{Name: "images.yml", Format: "YAML", Content: `copy:
   - src: registry.example.com/team/config:release-1.0
     dest: registry.example.com/team/config:test-latest
   - src: registry.example.com/team/ticket:release-1.0
-    dest: registry.example.com/team/ticket:test-latest`, color)
-
-	section(w, "Copy a release manifest", color)
-	codeBlock(w, `# Copy every digest-locked image in a release to another registry path.
-oci-toolbox copy \
+    dest: registry.example.com/team/ticket:test-latest`}},
+				Shell: `oci-toolbox copy --batch-file images.yml \
+  --release-id RE_2026.08.10.01 \
+  --output releases/RE_2026.08.10.01-dev.yml \
+  --src-insecure \
+  --dest-insecure \
+  --progress`,
+			},
+			{
+				Title:       "Mirror a digest-locked release under a new release ID",
+				Description: "Source digests remain immutable; the new release ID becomes the destination tag.",
+				Shell: `oci-toolbox copy \
   --release-manifest releases/2026.06.25.01.yml \
   --src-base quay.example.com/nac-test \
   --dest-base artifactory.example.com/nac-test \
@@ -64,181 +89,12 @@ oci-toolbox copy \
   --retries 5 \
   --retry-initial-delay 2s \
   --retry-max-delay 30s \
-  --progress`, color)
-
-	section(w, "Publish an image bundle", color)
-	codeBlock(w, `# bundle.yml: mutable desired state kept in Git.
-name: stable
-registries:
-  source:
-    url: registry-source.example.com
-  target:
-    url: registry-release.example.com
-    project: release
-extra_tags: [stable]
-images:
-  - id: config
-    source:
-      repository: team/config
-      tag: 2.3-latest
-    target:
-      repository: config
-    deployment:
-      app_name: config
-      container_name: config
-
-oci-toolbox bundle validate bundle.yml
-oci-toolbox bundle plan bundle.yml --release-id RE_2026.07.28.01
-oci-toolbox bundle publish bundle.yml \
-  --release-id RE_2026.07.28.01 \
-  --bundle-revision abc123 \
-  --output releases/RE_2026.07.28.01.yml \
-  --progress`, color)
-
-	section(w, "Publish a selective release", color)
-	codeBlock(w, `# Update only named Deployment/container selectors and carry all other
-# immutable digests forward from the previous release.
-oci-toolbox bundle publish bundle.yml \
-  --base-release releases/RE_2026.08.01.01.yml \
-  --release-id RE_2026.08.03.01 \
-  --select zis-aq-bridge/application \
-  --select zis-es-idx-view/application \
-  --output releases/RE_2026.08.03.01.yml \
-  --progress
-
-# selected-images.yml
-selectors:
-  - zis-aq-bridge/application
-  - zis-es-idx-view/application
-
-oci-toolbox bundle publish bundle.yml \
-  --base-release releases/RE_2026.08.01.01.yml \
-  --release-id RE_2026.08.03.01 \
-  --select-file selected-images.yml \
-  --preserve-base-only \
-  --output releases/RE_2026.08.03.01.yml`, color)
-
-	section(w, "Reconstruct a release manifest", color)
-	codeBlock(w, `# Reconstruct exact Deployment/container selectors from Kubernetes.
-oci-toolbox release reconstruct \
-  --namespace example \
-  --image-prefix registry.example.com/team \
-  --exclude-scaled-to-zero \
-  --release-id RE_2026.07.28.01 \
-  --kube-insecure \
-  --insecure \
-  --output releases/RE_2026.07.28.01.yml \
-  --discover-tags \
-  --progress
-
-# Reconstruct directly from existing tagged images.
-oci-toolbox release reconstruct \
-  registry.example.com/release/api:RE_2026.07.28.01 \
-  registry.example.com/release/ui:RE_2026.07.28.01 \
-  --output releases/RE_2026.07.28.01.yml \
-  --discover-tags \
-  --progress
-
-# Use a strict YAML input when deployment names differ from repository names.
-# release-images.yml
-images:
-  - ref: registry.example.com/release/diagnostics:RE_2026.07.28.01
-    id: ui-diagnostics
-    app_name: ui
-    container_name: diagnostics
-
-oci-toolbox release reconstruct \
-  --file release-images.yml \
-  --release-id RE_2026.07.28.01 \
-  --output releases/RE_2026.07.28.01.yml`, color)
-
-	section(w, "Convert a release manifest to a bundle", color)
-	codeBlock(w, `# Preserve the exact source content with immutable digests (default).
-oci-toolbox release to-bundle releases/RE_2026.08.10.01.yml \
-  --name tsm-sda-2.4 \
-  --output bundles/tsm-sda-2.4.yml
-
-# Use the recorded source tags instead to create a reusable, mutable bundle.
-oci-toolbox release to-bundle releases/RE_2026.08.10.01.yml \
-  --name tsm-sda-2.4 \
-  --source-mode tag \
-  --output bundles/tsm-sda-2.4-tags.yml`, color)
-
-	section(w, "Inspect, compare, and verify releases", color)
-	codeBlock(w, `# List deployment selectors for selective publishing.
-oci-toolbox release selectors releases/current.yml --format plain
-
-# Compare immutable image content between two releases.
-oci-toolbox release compare releases/previous.yml releases/current.yml \
-  --mode digest \
-  --format json \
-  --changed-only
-
-# Print a one-line CI-friendly result and fail on digest differences.
-oci-toolbox release compare releases/previous.yml releases/current.yml \
-  --mode digest \
-  --format summary \
-  --fail-on-change
-
-# Verify immutable digests and primary release tags in the registry.
-oci-toolbox release verify releases/current.yml --progress
-
-# Detect drift against Kubernetes Deployment containers.
-oci-toolbox release verify releases/current.yml \
-  --namespace example \
-  --image-prefix registry.example.com/team \
-  --format json`, color)
-
-	section(w, "Inspect and clean a registry", color)
-	codeBlock(w, `# oci-toolbox-registry.yml
-registry:
-  url: https://registry.example.com
-cleanup:
-  mode: created
-  keep_count: 14
-  protect_latest: true
-  protect_tag_patterns:
-    - "^stable$"
-repositories:
-  - name: team/api
-  - name: team/ui
-
-# Inspect repository metadata and generate a batch copy file.
-oci-toolbox registry info --config oci-toolbox-registry.yml --creds user:password
-oci-toolbox registry copy-plan --config oci-toolbox-registry.yml \
-  --dest-registry mirror.example.com --output images.yml
-
-# Cleanup is a dry-run unless --apply is explicitly supplied.
-oci-toolbox registry cleanup --config oci-toolbox-registry.yml
-oci-toolbox registry cleanup --config oci-toolbox-registry.yml --apply`, color)
-
-	section(w, "Snapshot Kubernetes deployment images", color)
-	codeBlock(w, `# Save every image referenced by Deployments in a namespace.
-oci-toolbox snapshot create --namespace example --output-dir ./snapshots
-
-# Restrict the snapshot with a glob evaluated against the complete image reference.
-oci-toolbox snapshot create --namespace example '*/team/docs-*:*'
-
-# Verify archive checksums and restore every image to its original reference.
-oci-toolbox snapshot restore --namespace example \
-  ./snapshots/example/20260728-120000.yml`, color)
-
-	section(w, "Discover Spring Boot configuration", color)
-	codeBlock(w, `# Extract Spring configuration candidates from JIB classpath directories and JARs.
-# Files are kept separate; manifest.yml records their origin and manifest.svg visualizes it.
-oci-toolbox spring-config discover \
-  docker://registry.example.com/team/application:2.4 \
-  --output ./spring-config-analysis \
-  --include 'config/*.yml' \
-  --progress \
-  --src-insecure
-
-# The result is a static inventory. Combine it later with deployment inputs,
-# Spring Cloud Config sources, and Actuator env/configprops snapshots.`, color)
-
-	section(w, "Java application", color)
-	codeBlock(w, `# app.yml: add an application, make /app writable for the runtime user, and set startup metadata.
-name: java-application
+  --progress`,
+			},
+			{
+				Title:       "Build a Java application image",
+				Description: "Add the application, configure its runtime identity, and keep recipe changes in one delta layer.",
+				Files: []exampleFile{{Name: "app.yml", Format: "YAML", Content: `name: java-application
 steps:
   - action: add-file
     src: ./target/uberjar/myapp.jar
@@ -262,15 +118,14 @@ steps:
     value: "-XX:MaxRAMPercentage=75"
   - action: set-label
     key: org.opencontainers.image.title
-    value: myapp
-
-# Keep base-image layers and make all recipe changes one delta layer.
-# src can instead use ./target/uberjar/*SNAPSHOT.jar when it matches exactly one JAR; dst: /app/ then preserves its filename.
-oci-toolbox copy --recipe app.yml --reduce-changes docker://registry.example.com/team/app:1.2 docker://registry.example.com/team/app:patched`, color)
-
-	section(w, "Replace a tool and configuration", color)
-	codeBlock(w, `# patch-tools.yml: replace every existing tool named encjson, copy a configuration tree, and remove obsolete content.
-steps:
+    value: myapp`}},
+				Shell: `oci-toolbox copy --recipe app.yml --reduce-changes \
+  docker://registry.example.com/team/app:1.2 \
+  docker://registry.example.com/team/app:patched`,
+			},
+			{
+				Title: "Replace tools and configuration",
+				Files: []exampleFile{{Name: "patch-tools.yml", Format: "YAML", Content: `steps:
   - action: replace-file
     src: ./bin/encjson
     dst: /usr/local/bin/encjson
@@ -289,13 +144,13 @@ steps:
     dst: /usr/local/bin/healthcheck
     mode: "0755"
     condition:
-      if-not-exists-in: [/bin, /usr/bin, /usr/local/bin]
-
-oci-toolbox copy --recipe patch-tools.yml SOURCE DEST`, color)
-
-	section(w, "Rebase onto another image", color)
-	codeBlock(w, `# rebase.yml: take application files from the CLI source, then write them onto a clean runtime image.
-sources:
+      if-not-exists-in: [/bin, /usr/bin, /usr/local/bin]`}},
+				Shell: "oci-toolbox copy --recipe patch-tools.yml SOURCE DEST",
+			},
+			{
+				Title:       "Rebase application files onto a clean runtime image",
+				Description: "The CLI source remains available as original after switching the output base.",
+				Files: []exampleFile{{Name: "rebase.yml", Format: "YAML", Content: `sources:
   - id: original
     ref: "{{.SourceImage}}"
   - id: runtime
@@ -313,13 +168,12 @@ steps:
     owner: "1001:0"
     mode: g=u
   - action: set-entrypoint
-    value_list: ["java", "-jar", "/app/myapp.jar"]
-
-oci-toolbox copy --recipe rebase.yml --reduce-changes SOURCE DEST`, color)
-
-	section(w, "Unpack or extract an artifact", color)
-	codeBlock(w, `# artifacts.yml: unzip a JAR already in the image and also write one source file to the local machine.
-sources:
+    value_list: ["java", "-jar", "/app/myapp.jar"]`}},
+				Shell: "oci-toolbox copy --recipe rebase.yml --reduce-changes SOURCE DEST",
+			},
+			{
+				Title: "Unpack an archive and extract an artifact",
+				Files: []exampleFile{{Name: "artifacts.yml", Format: "YAML", Content: `sources:
   - id: original
     ref: "{{.SourceImage}}"
 steps:
@@ -330,14 +184,13 @@ steps:
   - action: extract-file
     from: original
     src: /app/myapp.jar
-    dst-local: ./artifacts/myapp.jar
-
-oci-toolbox copy --recipe artifacts.yml SOURCE DEST`, color)
-
-	section(w, "Protect an application directory", color)
-	codeBlock(w, `# shadow.yml: replace /app with a self-extracting encrypted bootstrap.
-# The original Entrypoint and Cmd are preserved; app.self runs first and removes itself.
-steps:
+    dst-local: ./artifacts/myapp.jar`}},
+				Shell: "oci-toolbox copy --recipe artifacts.yml SOURCE DEST",
+			},
+			{
+				Title:       "Protect an application directory",
+				Description: "Replace /app with a self-extracting bootstrap while preserving Entrypoint and Cmd.",
+				Files: []exampleFile{{Name: "shadow.yml", Format: "YAML", Content: `steps:
   - action: shadow
     path: /app
     extract-to: /app
@@ -347,61 +200,381 @@ steps:
     path: /app
     owner: "1001:0"
     mode: g=u
-    setgid-dirs: true
+    setgid-dirs: true`}},
+				Shell: "oci-toolbox copy --recipe shadow.yml --reduce SOURCE DEST",
+			},
+		},
+	},
+	{
+		Command:     "bundle validate",
+		Description: "Validate the strict schema and deployment identity of an image bundle.",
+		Examples: []commandExample{{
+			Title: "Validate a bundle kept in Git",
+			Files: []exampleFile{{Name: "bundle.yml", Format: "YAML", Content: `name: stable
+registries:
+  source:
+    url: registry-source.example.com
+  target:
+    url: registry-release.example.com
+    project: release
+extra_tags: [stable]
+images:
+  - id: config
+    source:
+      repository: team/config
+      tag: 2.3-latest
+    target:
+      repository: config
+    deployment:
+      app_name: config
+      container_name: config`}},
+			Shell: "oci-toolbox bundle validate bundle.yml",
+		}},
+	},
+	{
+		Command:     "bundle plan",
+		Description: "Resolve and display the release operations without publishing images.",
+		Examples:    []commandExample{{Title: "Plan a release", Shell: "oci-toolbox bundle plan bundle.yml --release-id RE_2026.07.28.01"}},
+	},
+	{
+		Command:     "bundle publish",
+		Description: "Publish all or selected bundle images and write a digest-locked release manifest.",
+		Examples: []commandExample{
+			{
+				Title: "Publish a complete release",
+				Shell: `oci-toolbox bundle publish bundle.yml \
+  --release-id RE_2026.07.28.01 \
+  --bundle-revision abc123 \
+  --output releases/RE_2026.07.28.01.yml \
+  --progress`,
+			},
+			{
+				Title:       "Patch selected Deployment/container targets",
+				Description: "Selected images are updated; other immutable digests are carried forward from the base release.",
+				Shell: `oci-toolbox bundle publish bundle.yml \
+  --base-release releases/RE_2026.08.01.01.yml \
+  --release-id RE_2026.08.03.01 \
+  --select example-api/application \
+  --select example-worker/application \
+  --output releases/RE_2026.08.03.01.yml \
+  --progress`,
+			},
+			{
+				Title: "Load selectors from a file and preserve base-only targets",
+				Files: []exampleFile{{Name: "selected-images.yml", Format: "YAML", Content: `selectors:
+  - example-api/application
+  - example-worker/application`}},
+				Shell: `oci-toolbox bundle publish bundle.yml \
+  --base-release releases/RE_2026.08.01.01.yml \
+  --release-id RE_2026.08.03.01 \
+  --select-file selected-images.yml \
+  --preserve-base-only \
+  --output releases/RE_2026.08.03.01.yml`,
+			},
+		},
+	},
+	{
+		Command:     "release reconstruct",
+		Description: "Create a digest-locked release manifest from Kubernetes or existing registry images.",
+		Examples: []commandExample{
+			{
+				Title: "Reconstruct running Deployment containers",
+				Shell: `oci-toolbox release reconstruct \
+  --namespace example \
+  --image-prefix registry.example.com/team \
+  --exclude-scaled-to-zero \
+  --release-id RE_2026.07.28.01 \
+  --kube-insecure \
+  --insecure \
+  --output releases/RE_2026.07.28.01.yml \
+  --discover-tags \
+  --progress`,
+			},
+			{
+				Title: "Reconstruct directly from tagged images",
+				Shell: `oci-toolbox release reconstruct \
+  registry.example.com/release/api:RE_2026.07.28.01 \
+  registry.example.com/release/ui:RE_2026.07.28.01 \
+  --output releases/RE_2026.07.28.01.yml \
+  --discover-tags \
+  --progress`,
+			},
+			{
+				Title:       "Use explicit deployment identities",
+				Description: "Use a strict input file when deployment and repository names differ.",
+				Files: []exampleFile{{Name: "release-images.yml", Format: "YAML", Content: `images:
+  - ref: registry.example.com/release/diagnostics:RE_2026.07.28.01
+    id: ui-diagnostics
+    app_name: ui
+    container_name: diagnostics`}},
+				Shell: `oci-toolbox release reconstruct \
+  --file release-images.yml \
+  --release-id RE_2026.07.28.01 \
+  --output releases/RE_2026.07.28.01.yml`,
+			},
+		},
+	},
+	{
+		Command:     "release to-bundle",
+		Description: "Convert a release manifest back into a reusable image bundle.",
+		Examples: []commandExample{
+			{
+				Title:       "Keep immutable source digests",
+				Description: "Digest mode is the default and reproduces the exact recorded source content.",
+				Shell: `oci-toolbox release to-bundle releases/RE_2026.08.10.01.yml \
+  --name example-2.4 \
+  --output bundles/example-2.4.yml`,
+			},
+			{
+				Title: "Use mutable source tags",
+				Shell: `oci-toolbox release to-bundle releases/RE_2026.08.10.01.yml \
+  --name example-2.4 \
+  --source-mode tag \
+  --output bundles/example-2.4-tags.yml`,
+			},
+		},
+	},
+	{
+		Command:     "release selectors",
+		Description: "List Deployment/container selectors available for selective publishing.",
+		Examples:    []commandExample{{Title: "Print selectors as plain text", Shell: "oci-toolbox release selectors releases/current.yml --format plain"}},
+	},
+	{
+		Command:     "release compare",
+		Description: "Compare two release manifests at the desired semantic level.",
+		Examples: []commandExample{
+			{
+				Title: "Return changed digests as JSON",
+				Shell: `oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode digest \
+  --format json \
+  --changed-only`,
+			},
+			{
+				Title: "Produce a one-line CI result and fail on differences",
+				Shell: `oci-toolbox release compare releases/previous.yml releases/current.yml \
+  --mode digest \
+  --format summary \
+  --fail-on-change`,
+			},
+		},
+	},
+	{
+		Command:     "release verify",
+		Description: "Verify release digests, tags, and optional Kubernetes deployment state.",
+		Examples: []commandExample{
+			{Title: "Verify immutable digests and primary tags in the registry", Shell: "oci-toolbox release verify releases/current.yml --progress"},
+			{
+				Title: "Detect Kubernetes drift and emit JSON",
+				Shell: `oci-toolbox release verify releases/current.yml \
+  --namespace example \
+  --image-prefix registry.example.com/team \
+  --format json`,
+			},
+		},
+	},
+	{
+		Command:     "registry info",
+		Description: "Inspect repository metadata using a shared registry configuration.",
+		Examples: []commandExample{{
+			Title: "Inspect configured repositories",
+			Files: []exampleFile{{Name: "oci-toolbox-registry.yml", Format: "YAML", Content: `registry:
+  url: https://registry.example.com
+cleanup:
+  mode: created
+  keep_count: 14
+  protect_latest: true
+  protect_tag_patterns:
+    - "^stable$"
+repositories:
+  - name: team/api
+  - name: team/ui`}},
+			Shell: "oci-toolbox registry info --config oci-toolbox-registry.yml --creds user:password",
+		}},
+	},
+	{
+		Command:     "registry copy-plan",
+		Description: "Generate a batch copy file from configured registry repositories.",
+		Examples: []commandExample{{
+			Title: "Create images.yml for a mirror registry",
+			Shell: `oci-toolbox registry copy-plan --config oci-toolbox-registry.yml \
+  --dest-registry mirror.example.com \
+  --output images.yml`,
+		}},
+	},
+	{
+		Command:     "registry list-repositories",
+		Description: "List the registry catalog, optionally restricted to one repository prefix.",
+		Examples: []commandExample{
+			{Title: "List every repository", Shell: "oci-toolbox registry list-repositories --config oci-toolbox-registry.yml"},
+			{Title: "List repositories below a prefix", Shell: "oci-toolbox registry list-repositories --config oci-toolbox-registry.yml team"},
+		},
+	},
+	{
+		Command:     "registry cleanup",
+		Description: "Plan or apply registry retention rules.",
+		Examples: []commandExample{
+			{Title: "Preview cleanup", Description: "Cleanup is a dry-run unless --apply is supplied.", Shell: "oci-toolbox registry cleanup --config oci-toolbox-registry.yml"},
+			{Title: "Apply cleanup", Shell: "oci-toolbox registry cleanup --config oci-toolbox-registry.yml --apply"},
+		},
+	},
+	{
+		Command:     "snapshot create",
+		Description: "Save Kubernetes Deployment images and a restoration manifest.",
+		Examples: []commandExample{
+			{Title: "Snapshot every Deployment image", Shell: "oci-toolbox snapshot create --namespace example --output-dir ./snapshots"},
+			{Title: "Restrict images with a full-reference glob", Shell: "oci-toolbox snapshot create --namespace example '*/team/docs-*:*'"},
+		},
+	},
+	{
+		Command:     "snapshot restore",
+		Description: "Verify snapshot checksums and restore images to their original references.",
+		Examples: []commandExample{{
+			Title: "Restore a namespace snapshot",
+			Shell: `oci-toolbox snapshot restore --namespace example \
+  ./snapshots/example/20260728-120000.yml`,
+		}},
+	},
+	{
+		Command:     "spring-config discover",
+		Description: "Extract a static Spring Boot configuration inventory from an image.",
+		Examples: []commandExample{{
+			Title:       "Discover configuration in JIB classpath directories and JARs",
+			Description: "The output keeps files separate and writes manifest.yml plus a searchable manifest.svg.",
+			Shell: `oci-toolbox spring-config discover \
+  docker://registry.example.com/team/application:2.4 \
+  --output ./spring-config-analysis \
+  --include 'config/*.yml' \
+  --progress \
+  --src-insecure`,
+		}},
+	},
+	{
+		Command:     "tag-existing",
+		Description: "Add a tag to a manifest that already exists in the same registry repository.",
+		Examples: []commandExample{{
+			Title:       "Tag an existing digest without transferring layers",
+			Description: "Source and destination must use the same repository.",
+			Shell: `oci-toolbox tag-existing \
+  docker://registry.example.com/team/app@sha256:0123456789abcdef... \
+  docker://registry.example.com/team/app:release-1`,
+		}},
+	},
+	{
+		Command:     "inspect",
+		Description: "Print image metadata and configuration.",
+		Examples:    []commandExample{{Title: "Inspect an image", Shell: "oci-toolbox inspect docker://registry.example.com/team/app:latest"}},
+	},
+	{
+		Command:     "tree",
+		Description: "Browse an image filesystem as a directory tree.",
+		Examples:    []commandExample{{Title: "Show the /app subtree", Shell: "oci-toolbox tree docker://registry.example.com/team/app:latest /app"}},
+	},
+	{
+		Command:     "ls",
+		Description: "List direct entries in one image directory.",
+		Examples:    []commandExample{{Title: "List application resources", Shell: "oci-toolbox ls docker://registry.example.com/team/app:latest /app/resources"}},
+	},
+	{
+		Command:     "cat",
+		Description: "Write one image file to standard output.",
+		Examples:    []commandExample{{Title: "Read an application artifact", Shell: "oci-toolbox cat docker://registry.example.com/team/app:latest /app/app.jar"}},
+	},
+}
 
-# --reduce creates one final filesystem layer; use it when the smallest individual image matters.
-oci-toolbox copy --recipe shadow.yml --reduce SOURCE DEST`, color)
-
-	section(w, "Inspect image contents", color)
-	codeBlock(w, `oci-toolbox inspect docker://registry.example.com/team/app:latest
-oci-toolbox tree docker://registry.example.com/team/app:latest /app
-oci-toolbox cat docker://registry.example.com/team/app:latest /app/app.jar`, color)
+func writeExamples(w io.Writer, color bool) error {
+	writeExamplesIntro(w, color)
+	for _, command := range examplesCatalog {
+		writeCommandHeader(w, command.Command, command.Description, color)
+		for _, example := range command.Examples {
+			writeExample(w, example, color)
+		}
+	}
 
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Run 'oci-toolbox <command> --help' for all flags. Full reference: README.md")
+	if color {
+		fmt.Fprintf(w, "%sRun 'oci-toolbox <command> --help' for all flags. Full reference: README.md%s\n", ansiDim, ansiReset)
+	} else {
+		fmt.Fprintln(w, "Run 'oci-toolbox <command> --help' for all flags. Full reference: README.md")
+	}
 	return nil
 }
 
-func section(w io.Writer, title string, color bool) {
+func writeExamplesIntro(w io.Writer, color bool) {
 	if color {
-		fmt.Fprintf(w, "%s%s%s\n", ansiBold+ansiCyan, title, ansiReset)
+		fmt.Fprintf(w, "%s%sOCI-TOOLBOX COMMAND EXAMPLES%s\n", ansiBold, ansiCyan, ansiReset)
+		fmt.Fprintf(w, "%sCommands are green; external files are blue.%s\n", ansiDim, ansiReset)
 		return
 	}
-	fmt.Fprintln(w, title)
+	fmt.Fprintln(w, "OCI-TOOLBOX COMMAND EXAMPLES")
+	fmt.Fprintln(w, "Commands are marked SHELL; external files are marked FILE.")
 }
 
-func codeBlock(w io.Writer, block string, color bool) {
-	commandContinuation := false
-	for _, line := range strings.Split(block, "\n") {
-		if color && commandContinuation && line != "" {
-			fmt.Fprintln(w, ansiGreen+line+ansiReset)
-		} else {
-			fmt.Fprintln(w, highlightExampleLine(line, color))
+func writeCommandHeader(w io.Writer, command, description string, color bool) {
+	fmt.Fprintln(w)
+	title := strings.ToUpper(command)
+	if color {
+		fmt.Fprintf(w, "%s%s## %s%s\n", ansiBold, ansiCyan, title, ansiReset)
+		fmt.Fprintf(w, "   %s%s%s\n", ansiDim, description, ansiReset)
+		return
+	}
+	fmt.Fprintf(w, "## %s\n", title)
+	fmt.Fprintf(w, "   %s\n", description)
+}
+
+func writeExample(w io.Writer, example commandExample, color bool) {
+	fmt.Fprintln(w)
+	if color {
+		fmt.Fprintf(w, "  %s%s› %s%s\n", ansiBold, ansiYellow, example.Title, ansiReset)
+		if example.Description != "" {
+			fmt.Fprintf(w, "    %s%s%s\n", ansiDim, example.Description, ansiReset)
 		}
-		trimmed := strings.TrimSpace(line)
-		commandContinuation = (commandContinuation || strings.HasPrefix(trimmed, "oci-toolbox ")) &&
-			strings.HasSuffix(trimmed, `\`)
+	} else {
+		fmt.Fprintf(w, "  › %s\n", example.Title)
+		if example.Description != "" {
+			fmt.Fprintf(w, "    %s\n", example.Description)
+		}
+	}
+	for _, file := range example.Files {
+		writeFileBlock(w, file, color)
+	}
+	if example.Shell != "" {
+		writeShellBlock(w, example.Shell, color)
 	}
 }
 
-func highlightExampleLine(line string, color bool) string {
-	if !color || line == "" {
-		return line
+func writeShellBlock(w io.Writer, shell string, color bool) {
+	fmt.Fprintln(w)
+	if color {
+		fmt.Fprintf(w, "    %s%sSHELL%s\n", ansiBold, ansiGreen, ansiReset)
+	} else {
+		fmt.Fprintln(w, "    SHELL")
 	}
-	trimmed := strings.TrimSpace(line)
-	if strings.HasPrefix(trimmed, "#") {
-		return ansiBlue + line + ansiReset
+	for _, line := range strings.Split(shell, "\n") {
+		if color {
+			fmt.Fprintf(w, "%s      %s%s\n", ansiGreen, line, ansiReset)
+		} else {
+			fmt.Fprintf(w, "      %s\n", line)
+		}
 	}
-	if strings.HasPrefix(trimmed, "oci-toolbox ") {
-		return ansiGreen + line + ansiReset
+}
+
+func writeFileBlock(w io.Writer, file exampleFile, color bool) {
+	fmt.Fprintln(w)
+	label := "FILE · " + file.Name
+	if file.Format != "" {
+		label += " (" + strings.ToUpper(file.Format) + ")"
 	}
-	if key, value, ok := strings.Cut(trimmed, ": "); ok {
-		indent := line[:len(line)-len(trimmed)]
-		return indent + ansiYellow + key + ":" + ansiReset + " " + value
+	if color {
+		fmt.Fprintf(w, "    %s%s%s%s\n", ansiBold, ansiBlue, label, ansiReset)
+	} else {
+		fmt.Fprintf(w, "    %s\n", label)
 	}
-	if strings.HasSuffix(trimmed, ":") {
-		indent := line[:len(line)-len(trimmed)]
-		return indent + ansiYellow + trimmed + ansiReset
+	for _, line := range strings.Split(file.Content, "\n") {
+		if color {
+			fmt.Fprintf(w, "%s        %s%s\n", ansiBlue, line, ansiReset)
+		} else {
+			fmt.Fprintf(w, "        %s\n", line)
+		}
 	}
-	return line
 }
