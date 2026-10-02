@@ -19,6 +19,7 @@
   - [tree](#tree)
   - [examples](#examples-command)
   - [bundle](#bundle)
+  - [release convert](#release-convert)
   - [release to-bundle](#release-to-bundle)
   - [release reconstruct](#release-reconstruct)
   - [release selectors and compare](#release-selectors-and-compare)
@@ -540,6 +541,29 @@ oci-toolbox help examples
 
 When stdout is a terminal, command headings, variant names, shell blocks, and external file blocks use distinct colors. Piping or redirecting the output preserves the same hierarchy as plain text, so this is safe for `oci-toolbox examples | less` and `oci-toolbox examples > examples.txt`.
 
+### Digest review before publishing
+
+`bundle plan` remains an offline reference preview. For a registry-backed review:
+
+```sh
+oci-toolbox bundle inspect bundles/stable.yml --release-id release-1 > /tmp/review.json
+oci-toolbox bundle publish bundles/stable.yml --release-id release-1 \
+  --digest-plan /tmp/review.json --output releases/release-1.yml
+```
+
+`bundle inspect` emits JSON containing source references, destination references,
+application/container selectors and source digests. It reads registry manifests
+without downloading image layers or modifying either registry. It supports the
+same source/destination credentials, TLS/proxy flags and selective base-release
+options as publishing. For selective publishing, pass the same `--base-release`,
+`--select` and `--preserve-base-only` options to both commands.
+
+`--digest-plan` verifies the release identity and every planned source/destination
+reference before registry writes, then publishes from the reviewed digest references.
+Moving a source tag after inspection cannot change published content. Keep the
+review JSON as a trusted local artifact; changed bundle references require a fresh
+inspection. Existing publishing without this flag remains supported.
+
 ### bundle
 
 A bundle is a mutable, Git-managed declaration of which image tags or digests should be published as one release. It contains no credentials and uses strict YAML: unknown fields, duplicate IDs, duplicate deployment selectors, and duplicate target repositories are rejected.
@@ -635,6 +659,51 @@ When a reused base image stays in the same repository, publish creates the new r
 With `--progress`, a separate `preflight` progress bar is shown before image transfer. It reports the number of inspected images, the selector currently being checked, and whether the source digest or destination tag is being inspected.
 
 New images selected from the bundle currently support only single-platform `linux/amd64` manifests. Unselected and base-only images reused by immutable digest may also be multi-platform OCI indexes; they are retagged without selecting or modifying a child platform.
+
+### release convert
+
+Read either the existing `release_id` / `images` manifest or a
+`release.tsm.datalite.cz/v1alpha1` `TsmProductRelease` and write the existing
+internal release format. New outputs have `apiVersion: oci-toolbox/v1` and
+`kind: ImageRelease`; `release_id`, `created_at` and `images` remain at the root.
+Legacy files without a header are still accepted. Unknown or incomplete headers
+are rejected. Conversion is offline: no registry or cluster access.
+
+```bash
+oci-toolbox release convert product-manifest.yaml --output releases/product.yml
+oci-toolbox release convert product-manifest.yaml \
+  --release-id RE_2026.10.02.01 \
+  --selector frontend-datalite=tsm-ui/tsm-ui \
+  --output releases/RE_2026.10.02.01.yml
+```
+
+Without `--output`, YAML is written to stdout. Existing output files are refused.
+`--release-id` changes only the release identifier, not individual image tags.
+`--selector image-id=app[/container]` is repeatable; omitting the container
+creates an application-wide selector.
+
+Product inputs include **all** `spec.containers` and `spec.frontend.apps` images,
+regardless of `changedComponents`. Backend IDs and default deployment selectors
+use the container map key. Frontend IDs are `frontend-<app-key>` and their default
+selectors use the image repository basename (e.g. `tsm-ui`). Review these inferred
+selectors before building deployments, especially when multiple frontend variants
+exist. Duplicate selectors must be resolved explicitly using `--selector`.
+
+The product ID comes from `spec.version.product` (or `metadata.name` when absent);
+if both exist they must match. Image tags and digests, creation time and source
+image metadata are preserved. The product release tag becomes `bundle.revision`.
+Maven/source inventories, verification results and `originRelease` are not copied
+into the internal image manifest; retain the original product file for that history.
+Platform is left unspecified because the product manifest does not declare it.
+A common registry/project prefix is inferred only when all images share a registry.
+Otherwise `registry_base` is omitted and copying requires an explicit `--src-base`
+covering every image (or separate inputs for different registries).
+
+The same input detection is used by `release selectors`, `release compare`,
+`release verify`, `release to-bundle`, `bundle publish --base-release` and
+`copy --release-manifest`. Bundle definitions themselves still use their existing
+`images` format; use `release to-bundle` to prepare a product input for KRF's
+existing bundle flow. All generated manifests remain in the internal format.
 
 ### release to-bundle
 

@@ -625,17 +625,8 @@ func loadReleaseCopyPlan(path, sourceBase, targetBase, requestedReleaseID string
 	}
 	defer f.Close()
 
-	decoder := yaml.NewDecoder(f)
-	decoder.KnownFields(true)
-	var manifest bundle.ReleaseManifest
-	if err := decoder.Decode(&manifest); err != nil {
-		return nil, fmt.Errorf("parsing release manifest %q: %w", path, err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return nil, fmt.Errorf("parsing release manifest %q: multiple YAML documents are not allowed", path)
-		}
+	manifest, err := bundle.DecodeReleaseDocument(f)
+	if err != nil {
 		return nil, fmt.Errorf("parsing release manifest %q: %w", path, err)
 	}
 

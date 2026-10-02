@@ -133,7 +133,7 @@ func init() {
 	bundlePublishCmd.Flags().StringVar(&bundlePublishOptions.selectFile, "select-file", "", "strict YAML file containing a selectors list")
 	bundlePublishCmd.Flags().BoolVar(&bundlePublishOptions.preserveBaseOnly, "preserve-base-only", false, "use the base release as the target template and ignore unselected bundle-only targets")
 
-	bundleCmd.AddCommand(bundleValidateCmd, bundlePlanCmd, bundlePublishCmd)
+	bundleCmd.AddCommand(bundleValidateCmd, bundlePlanCmd, bundleInspectCmd, bundlePublishCmd)
 	rootCmd.AddCommand(bundleCmd)
 }
 
@@ -175,49 +175,12 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 	} else {
 		logging.Setup(slog.LevelInfo)
 	}
-	b, err := bundle.Load(args[0])
+	plan, baseRelease, err := effectiveBundlePlan(args[0])
 	if err != nil {
 		return err
 	}
-	selectors := append([]string(nil), bundlePublishOptions.selectors...)
-	if strings.TrimSpace(bundlePublishOptions.selectFile) != "" {
-		fileSelectors, err := bundle.LoadSelectionFile(bundlePublishOptions.selectFile)
-		if err != nil {
-			return err
-		}
-		selectors = append(selectors, fileSelectors...)
-	}
-	baseReleasePath := strings.TrimSpace(bundlePublishOptions.baseRelease)
-	var baseRelease *bundle.ReleaseManifest
-	targetRegistry := bundleOptions.targetRegistry
-	if baseReleasePath == "" {
-		if len(selectors) > 0 {
-			return errors.New("--select and --select-file require --base-release")
-		}
-		if bundlePublishOptions.preserveBaseOnly {
-			return errors.New("--preserve-base-only requires --base-release")
-		}
-	} else {
-		baseRelease, err = bundle.LoadRelease(baseReleasePath)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(targetRegistry) == "" && strings.TrimSpace(b.Registries.Target.URL) == "" {
-			targetRegistry, err = bundle.InferTargetRegistry(b, baseRelease, bundleOptions.targetProject)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	plan, err := resolveBundlePlan(b, targetRegistry)
-	if err != nil {
-		return err
-	}
-	if baseRelease != nil {
-		plan, err = bundle.ApplyBaseReleaseWithOptions(plan, baseRelease, selectors, bundle.SelectiveOptions{
-			PreserveBaseOnly: bundlePublishOptions.preserveBaseOnly,
-		})
-		if err != nil {
+	if bundleDigestPlanPath != "" {
+		if err := lockBundlePlan(plan, bundleDigestPlanPath); err != nil {
 			return err
 		}
 	}
@@ -255,6 +218,9 @@ func runBundlePublish(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("image %q target preflight: %w", item.ID, err)
 		}
 		sourceDigest := sourceDesc.Digest.String()
+		if bundleDigestPlanPath != "" && !strings.HasSuffix(item.SourceRef, "@"+sourceDigest) {
+			return fmt.Errorf("image %q source content differs from the reviewed digest", item.ID)
+		}
 		if exists && targetDesc.Digest.String() != sourceDigest {
 			return fmt.Errorf(
 				"image %q destination tag %s already points to %s, source is %s",

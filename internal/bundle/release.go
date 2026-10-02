@@ -12,7 +12,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const ReleaseAPIVersion = "oci-toolbox/v1"
+const ReleaseKind = "ImageRelease"
+
 type ReleaseManifest struct {
+	APIVersion   string         `yaml:"apiVersion,omitempty"`
+	Kind         string         `yaml:"kind,omitempty"`
 	ReleaseID    string         `yaml:"release_id"`
 	CreatedAt    time.Time      `yaml:"created_at"`
 	Bundle       *ReleaseBundle `yaml:"bundle,omitempty"`
@@ -70,26 +75,20 @@ func LoadRelease(path string) (*ReleaseManifest, error) {
 }
 
 func DecodeRelease(r io.Reader) (*ReleaseManifest, error) {
-	dec := yaml.NewDecoder(r)
-	dec.KnownFields(true)
-	var manifest ReleaseManifest
-	if err := dec.Decode(&manifest); err != nil {
-		return nil, err
-	}
-	var extra any
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return nil, errors.New("multiple YAML documents are not allowed")
-		}
+	manifest, err := DecodeReleaseDocument(r)
+	if err != nil {
 		return nil, err
 	}
 	if err := manifest.Validate(); err != nil {
 		return nil, err
 	}
-	return &manifest, nil
+	return manifest, nil
 }
 
 func (m *ReleaseManifest) Validate() error {
+	if (m.APIVersion != "" || m.Kind != "") && (m.APIVersion != ReleaseAPIVersion || m.Kind != ReleaseKind) {
+		return fmt.Errorf("unsupported release format %q / %q", m.APIVersion, m.Kind)
+	}
 	if err := requiredText("release_id", m.ReleaseID); err != nil {
 		return err
 	}
@@ -187,5 +186,9 @@ func EncodeRelease(w io.Writer, manifest *ReleaseManifest) error {
 	enc := yaml.NewEncoder(w)
 	enc.SetIndent(2)
 	defer enc.Close()
-	return enc.Encode(manifest)
+	// Stamp the output without changing the caller's legacy input model.
+	output := *manifest
+	output.APIVersion = ReleaseAPIVersion
+	output.Kind = ReleaseKind
+	return enc.Encode(&output)
 }
