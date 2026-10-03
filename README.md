@@ -25,6 +25,7 @@
   - [release selectors and compare](#release-selectors-and-compare)
   - [release verify](#release-verify)
   - [registry maintenance](#registry-maintenance)
+  - [Targeted tag and manifest deletion](#targeted-tag-and-manifest-deletion)
   - [Kubernetes image snapshots](#kubernetes-image-snapshots)
 - [Git release repository](#git-release-repository)
 - [Credentials](#credentials)
@@ -910,6 +911,67 @@ oci-toolbox registry cleanup --config oci-toolbox-registry.yml --apply
 ```
 
 Cleanup works with unique manifest digests rather than counting aliases as separate images. `mode: timestamp` orders tags matching `YYYY.MM.DD.BUILD`; `mode: created` uses image configuration timestamps. Protected tags preserve their complete manifest digest. Registry operations also support `--insecure`, `--ca-cert`, `--timeout`, repository filtering, and missing-repository handling.
+
+### Targeted tag and manifest deletion
+
+`delete-tag` removes one explicit tag. `delete-manifest` removes an explicit
+manifest digest from one repository, affecting every tag pointing to that digest.
+Available since **1.0.0**; `oci-toolbox examples` includes preview and apply commands.
+Both default to **dry-run**: only `--apply` sends a DELETE request. Inspection
+reads manifest metadata, not image layers. Docker credentials/helpers are used
+unless `--creds user:password` is supplied. `--insecure` skips TLS verification;
+`--timeout` bounds the complete operation (default 60 seconds).
+
+```sh
+# Inspect one tag without deleting it.
+oci-toolbox delete-tag registry.example.com/team/app:bad-release
+
+# Remove that tag only. Never substitute a digest reference here.
+oci-toolbox delete-tag registry.example.com/team/app:bad-release --apply
+
+# Optional guard: refuse if the tag points to a different manifest.
+oci-toolbox delete-tag registry.example.com/team/app:bad-release \
+  --expect-digest sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --apply
+
+# Preview deletion of a manifest; also lists its current tag aliases.
+oci-toolbox delete-manifest \
+  registry.example.com/team/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# Repeat the same command with --apply to execute.
+```
+
+Tag deletion uses `DELETE /v2/<repository>/manifests/<tag>`. Some registries
+disable or do not implement this optional OCI operation. Failure does **not**
+fall back to deleting the digest, because that would affect other tags.
+
+For Artifactory deployments requiring storage-folder deletion, explicitly supply
+the Artifactory base URL and the storage path `REPO_KEY/IMAGE_PATH` (without the
+tag). Obtain the real repository key from Artifactory; Docker routing alone may
+not reveal it. The URL must use the same host as the Docker image reference, and
+the storage path must match that image. The tool never guesses this mapping.
+
+```sh
+oci-toolbox delete-tag artifactory.example.com/team/app:bad-release \
+  --artifactory-url https://artifactory.example.com/artifactory \
+  --artifactory-path docker-local/team/app
+# Review the displayed storage target, then repeat with --apply.
+```
+
+The Artifactory backend deletes exactly the selected tag folder using its REST
+API. Credentials must have Artifactory Delete permission; supply `--creds` if
+the Docker credential helper's credentials do not permit storage API access.
+The command rechecks the digest before deleting and verifies the requested
+reference is absent afterward. This is not an atomic compare-and-delete: avoid
+concurrently retargeting tags while deleting them. A verification failure is
+reported rather than claiming success; deletion may already have occurred.
+
+A release's `sha256` identifies an **image manifest/index**, not a filesystem
+layer. Manifest deletion does not delete shared layers or recursively delete
+child manifests of a multi-platform index. Storage reclamation is handled by
+registry retention/garbage collection. Neither command sends blob deletions.
+
+References: [OCI content management](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#content-management),
+[Artifactory Docker tag deletion](https://docs.jfrog.com/artifactory/docs/additional-docker-information).
 
 ### Kubernetes image snapshots
 

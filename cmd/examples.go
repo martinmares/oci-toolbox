@@ -43,6 +43,23 @@ type commandExamples struct {
 
 var examplesCatalog = []commandExamples{
 	{
+		Command:     "delete-tag",
+		Description: "Remove one explicit tag; preview by default, never fall back to digest deletion.",
+		Examples: []commandExample{
+			{Title: "Preview one tag", Shell: "oci-toolbox delete-tag registry.example.com/team/app:bad-release"},
+			{Title: "Delete the reviewed tag", Description: "--apply sends DELETE; --expect-digest refuses if the tag points to another manifest.", Shell: "oci-toolbox delete-tag registry.example.com/team/app:bad-release --expect-digest sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --apply"},
+			{Title: "Artifactory storage API preview", Description: "Use the actual REPO_KEY/IMAGE_PATH; review the folder before adding --apply.", Shell: "oci-toolbox delete-tag artifactory.example.com/team/app:bad-release --artifactory-url https://artifactory.example.com/artifactory --artifactory-path docker-local/team/app"},
+		},
+	},
+	{
+		Command:     "delete-manifest",
+		Description: "Remove a manifest digest and every tag pointing to it in this repository. Shared layers are not deleted.",
+		Examples: []commandExample{
+			{Title: "Preview manifest and affected tags", Shell: "oci-toolbox delete-manifest registry.example.com/team/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+			{Title: "Delete the reviewed manifest", Description: "Deletes all its tag aliases; storage reclamation depends on registry garbage collection.", Shell: "oci-toolbox delete-manifest registry.example.com/team/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --apply"},
+		},
+	},
+	{
 		Command:     "copy",
 		Description: "Copy OCI images, mirror releases, or apply filesystem recipes.",
 		Examples: []commandExample{
