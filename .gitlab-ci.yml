@@ -5,7 +5,7 @@ stages:
   - release
 
 default:
-  image: golang:1.26-bookworm
+  image: golang:1.27-bookworm
 
 variables:
   GIT_DEPTH: "0"
@@ -22,6 +22,13 @@ cache:
 before_script:
   - mkdir -p .tmp/go-build-cache .tmp/go/pkg/mod
 
+.release_rules:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"'
+      changes:
+        - VERSION
+
 check:
   stage: verify
   script:
@@ -34,6 +41,9 @@ check:
 
 test:
   stage: verify
+  before_script:
+    - mkdir -p .tmp/go-build-cache .tmp/go/pkg/mod
+    - apt-get update && apt-get install -y --no-install-recommends curl jq ca-certificates
   script:
     - go test ./...
     - cd internal/shadow/extractor && go test .
@@ -42,6 +52,7 @@ test:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
 release_notes:
+  extends: .release_rules
   stage: prepare
   script:
     - bash scripts/ci_release_notes.sh
@@ -52,15 +63,15 @@ release_notes:
       - dist/release_notes.md
       - dist/CHANGELOG.generated.md
     expire_in: 30 days
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        - VERSION
-
 release_binaries:
+  extends: .release_rules
   stage: build
   timeout: 1h
   needs:
+    - job: check
+      artifacts: false
+    - job: test
+      artifacts: false
     - job: release_notes
       artifacts: true
   script:
@@ -70,13 +81,12 @@ release_binaries:
     paths:
       - dist/release_assets.txt
     expire_in: 30 days
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        - VERSION
-
 publish_release:
+  extends: .release_rules
   stage: release
+  resource_group: release
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends curl jq ca-certificates
   needs:
     - job: release_notes
       artifacts: true
@@ -84,7 +94,3 @@ publish_release:
       artifacts: true
   script:
     - bash scripts/ci_publish_release.sh
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        - VERSION

@@ -1519,6 +1519,40 @@ ok  github.com/martinmares/oci-toolbox/internal/image    (17 tests)
 ok  github.com/martinmares/oci-toolbox/internal/recipe   (11 tests)
 ```
 
+## Automated binary releases
+
+GitLab CI and GitHub Actions build releases when `VERSION` changes on the
+default branch (GitHub: `main`). Both pipelines also support a manual run on
+that branch. Set `VERSION` to a semantic version without the `v` prefix;
+the release tag is `v<VERSION>`. An existing tag must point to the same commit,
+otherwise increment `VERSION` rather than replacing the release.
+
+Each release contains six `.tar.gz` archives: Linux, macOS and Windows,
+each for `amd64` and `arm64`, plus `SHA256SUMS`. Archives include the executable,
+both READMEs and the MIT license. Embedded extractors are built first, and
+tests must pass before publication.
+
+- GitLab uploads binaries directly to the Generic Package Registry and links
+  them from the Release. Only small metadata files travel between jobs as
+  artifacts, avoiding the previous oversized-artifact upload. Authentication
+  uses `CI_JOB_TOKEN`; the project must permit package and release publication.
+- GitHub publishes archives as Release assets using the workflow's
+  `GITHUB_TOKEN` (`contents: write`), without a separate personal token.
+  Uploads go into a draft before publication; versions containing a prerelease
+  suffix are marked as prereleases.
+
+The repository must be pushed or mirrored to each hosting service; adding a
+workflow does not configure repository mirroring. Release notes are generated
+from Git history. `RELEASE_PUSH_TOKEN` remains optional for committing the
+generated changelog back to GitLab.
+
+To build packages locally without publishing:
+
+```sh
+bash scripts/ci_release_notes.sh
+bash scripts/ci_package_release.sh
+```
+
 ## License
 
 MIT, Copyright (c) 2026 Martin Mareš. See [LICENSE](LICENSE).

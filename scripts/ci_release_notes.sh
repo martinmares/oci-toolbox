@@ -1,26 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "$0")/ci_release_common.sh"
 
-version="$(tr -d '[:space:]' < VERSION)"
+version="$RELEASE_VERSION"
 if [[ -z "${version}" ]]; then
   echo "VERSION is empty" >&2
   exit 1
 fi
 
-tag="v${version}"
+tag="$RELEASE_TAG"
 mkdir -p dist
 
-git fetch --tags --force >/dev/null 2>&1 || true
+previous_tag=""
+while IFS= read -r candidate; do
+  if [[ "$candidate" != "$tag" ]]; then previous_tag="$candidate"; break; fi
+done < <(git tag --merged "$RELEASE_COMMIT" --list 'v[0-9]*' --sort=-version:refname)
 
-previous_tag="$(
-  git tag --list 'v*' --sort=-version:refname \
-    | grep -v "^${tag}$" \
-    | head -n 1 || true
-)"
-
-range="HEAD"
+range="$RELEASE_COMMIT"
 if [[ -n "${previous_tag}" ]]; then
-  range="${previous_tag}..HEAD"
+  range="${previous_tag}..${RELEASE_COMMIT}"
 fi
 
 release_date="$(date -u +%Y-%m-%d)"
@@ -51,6 +49,7 @@ release_date="$(date -u +%Y-%m-%d)"
 {
   echo "RELEASE_VERSION=${version}"
   echo "RELEASE_TAG=${tag}"
+  echo "RELEASE_COMMIT=${RELEASE_COMMIT}"
   echo "PREVIOUS_RELEASE_TAG=${previous_tag}"
 } > dist/release.env
 

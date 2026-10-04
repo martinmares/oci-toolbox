@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "$0")/ci_release_common.sh"
 
-version="${RELEASE_VERSION:-$(tr -d '[:space:]' < VERSION)}"
+version="$RELEASE_VERSION"
 package_name="oci-toolbox"
 release_dir="dist/release"
 assets_file="dist/release_assets.txt"
@@ -27,6 +28,7 @@ if [[ ! -f "${release_dir}/SHA256SUMS" ]]; then
   echo "Missing ${release_dir}/SHA256SUMS" >&2
   exit 1
 fi
+(cd "$release_dir" && release_checksum -c SHA256SUMS)
 
 : > "${assets_file}"
 for file_path in "${package_files[@]}" "${release_dir}/SHA256SUMS"; do

@@ -1429,6 +1429,40 @@ ok  github.com/martinmares/oci-toolbox/internal/image    (17 testů)
 ok  github.com/martinmares/oci-toolbox/internal/recipe   (11 testů)
 ```
 
+## Automatické vydávání binárek
+
+GitLab CI i GitHub Actions sestaví release při změně souboru `VERSION` na
+výchozí větvi (GitHub: `main`). Na této větvi lze pipeline spustit i ručně.
+Do `VERSION` patří sémantická verze bez prefixu `v`; release má tag
+`v<VERSION>`. Existující tag musí ukazovat na stejný commit, jinak je nutné
+zvýšit `VERSION`, nikoli přepsat původní release.
+
+Výstupem je šest archivů `.tar.gz`: Linux, macOS a Windows, vždy pro `amd64`
+i `arm64`, a soubor `SHA256SUMS`. Archivy obsahují binárku, oba README a MIT
+licenci. Před sestavením se připraví embedded extractory a před publikováním
+musí projít testy.
+
+- GitLab posílá binárky přímo do Generic Package Registry a do Release přidá
+  odkazy. Mezi joby se jako artifacts přenáší pouze malá metadata, aby se
+  neopakovala chyba s příliš velkým uploadem. Používá se `CI_JOB_TOKEN`;
+  projekt musí umožňovat publikování balíčků a releases.
+- GitHub publikuje archivy jako přílohy Release pomocí vestavěného
+  `GITHUB_TOKEN` s oprávněním `contents: write`, bez samostatného osobního
+  tokenu. Přílohy se nejprve nahrají do draftu a pak se release zveřejní.
+  Verze s prerelease příponou jsou označené jako prerelease.
+
+Repozitář musí být pushnutý nebo zrcadlený na obou službách; samotný workflow
+zrcadlení nenastavuje. Release notes se generují z Git historie.
+`RELEASE_PUSH_TOKEN` zůstává volitelný pro zápis vygenerovaného changelogu
+zpět do GitLabu.
+
+Lokální sestavení archivů bez publikování:
+
+```sh
+bash scripts/ci_release_notes.sh
+bash scripts/ci_package_release.sh
+```
+
 ## Licence
 
 MIT, Copyright (c) 2026 Martin Mareš. Viz [LICENSE](LICENSE).

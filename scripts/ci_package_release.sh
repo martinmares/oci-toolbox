@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "$0")/ci_release_common.sh"
 
-version="${RELEASE_VERSION:-$(tr -d '[:space:]' < VERSION)}"
-commit="${CI_COMMIT_SHORT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || printf unknown)}"
+version="$RELEASE_VERSION"
+commit="${RELEASE_COMMIT:0:12}"
 date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 package="oci-toolbox"
 binary="oci-toolbox"
@@ -15,8 +16,9 @@ fi
 
 bash scripts/build_embedded_extractors.sh
 
-rm -rf "${release_dir}"
 mkdir -p "${release_dir}" .tmp/go-build-cache
+package_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/oci-toolbox-release.XXXXXX")"
+trap 'rm -rf "$package_work_dir"' EXIT
 
 ldflags="-s -w -X github.com/martinmares/oci-toolbox/cmd.version=${version} -X github.com/martinmares/oci-toolbox/cmd.commit=${commit} -X github.com/martinmares/oci-toolbox/cmd.date=${date}"
 
@@ -34,7 +36,7 @@ for target in "${targets[@]}"; do
   arch="${target#*/}"
 
   archive_base="${package}-${version}-${os}-${arch}"
-  work_dir="${release_dir}/${archive_base}"
+  work_dir="${package_work_dir}/${archive_base}"
   output_name="${binary}"
   if [[ "${os}" == "windows" ]]; then
     output_name="${binary}.exe"
@@ -48,14 +50,13 @@ for target in "${targets[@]}"; do
   GOARCH="${arch}" \
   go build -trimpath -ldflags "${ldflags}" -o "${work_dir}/${output_name}" .
 
-  cp README.md README.cs.md "${work_dir}/"
-  tar -C "${release_dir}" -czf "${release_dir}/${archive_base}.tar.gz" "${archive_base}"
-  rm -rf "${work_dir}"
+  cp README.md README.cs.md LICENSE "${work_dir}/"
+  tar -C "${package_work_dir}" -czf "${release_dir}/${archive_base}.tar.gz" "${archive_base}"
 done
 
 (
   cd "${release_dir}"
-  sha256sum -- *.tar.gz > SHA256SUMS
+  release_checksum -- "${package}-${version}-"*.tar.gz > SHA256SUMS
 )
 
 echo
