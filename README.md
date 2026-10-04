@@ -1518,3 +1518,30 @@ Tests are fully offline — no registry access required. They use in-memory OCI 
 ok  github.com/martinmares/oci-toolbox/internal/image    (17 tests)
 ok  github.com/martinmares/oci-toolbox/internal/recipe   (11 tests)
 ```
+
+## License
+
+MIT, Copyright (c) 2026 Martin Mareš. See [LICENSE](LICENSE).
+The license permits use, modification, redistribution and commercial use.
+
+## Commercial Support
+
+This software is provided under the MIT License and comes without
+warranty or free community support.
+
+Commercial support is available from **[DataLite](https://datalite.cz)**, including:
+
+- technical assistance,
+- verified releases,
+- bug fixes,
+- updates,
+- deployment assistance,
+- troubleshooting,
+- long-term maintenance.
+
+Contact [DataLite](https://datalite.cz) for commercial support options.
+
+Commercial support is a separate service, not a requirement for using the
+software under the MIT License. Public issues, feature requests and pull
+requests do not create an obligation to respond, provide fixes or accept
+contributions; upstream changes remain at the maintainer's discretion.

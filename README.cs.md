@@ -1428,3 +1428,30 @@ Testy jsou plně offline — nevyžadují přístup k žádnému registry. Použ
 ok  github.com/martinmares/oci-toolbox/internal/image    (17 testů)
 ok  github.com/martinmares/oci-toolbox/internal/recipe   (11 testů)
 ```
+
+## Licence
+
+MIT, Copyright (c) 2026 Martin Mareš. Viz [LICENSE](LICENSE).
+Licence umožňuje použití, úpravy, redistribuci i komerční využití.
+
+## Komerční podpora
+
+Software je poskytován pod MIT License ve stavu „AS IS“, bez záruky
+a bez bezplatné komunitní podpory.
+
+Komerční podporu nabízí **[DataLite](https://datalite.cz)**, zejména:
+
+- technickou pomoc,
+- ověřené releasy,
+- opravy chyb,
+- aktualizace,
+- pomoc s nasazením,
+- řešení problémů,
+- dlouhodobou údržbu.
+
+Možnosti komerční podpory řešte se společností [DataLite](https://datalite.cz).
+
+Komerční podpora je samostatná služba, nikoliv podmínka používání software
+pod MIT License. Veřejná hlášení, požadavky na funkce ani pull requesty
+nezakládají povinnost odpovídat, opravovat chyby nebo přijímat příspěvky;
+o změnách upstream projektu rozhoduje maintainer.
