@@ -636,6 +636,30 @@ S `--progress` se před samotným přenosem zobrazuje samostatný `preflight` pr
 
 Nové images vybrané z bundle zatím podporují pouze samostatné `linux/amd64` manifesty. Nevybrané a base-only images převzaté přes neměnný digest mohou být také multi-platform OCI indexy; dostanou nový tag bez výběru nebo změny konkrétní platformy.
 
+### Externí release formáty
+
+Release příkazy přijímají vlastní formát `oci-toolbox/v1` / `ImageRelease`
+a původní neversionované soubory s `release_id` a `images`. Automatický import
+produktových manifestů a příkaz `release convert` byly odstraněny.
+
+Cizí YAML nejprve převeď samostatnou utilitou `yaml-map`. Konkrétní pravidla
+patří do Jinja-like šablony spravované společně s integrací:
+
+```bash
+yaml-map --input manifest.yaml \
+  --template /cesta/k/yaml-map/examples/product-release-to-images.yaml.j2 \
+  --arg release_id=RE_2026.10.02.01 \
+  --output releases/RE_2026.10.02.01.yml
+
+oci-toolbox release selectors releases/RE_2026.10.02.01.yml --format plain
+```
+
+Převod funguje offline. `oci-toolbox` výsledný nativní manifest validuje
+a zpracuje obvyklým způsobem. Před publikováním ověř deployment selectory
+a ponech si původní produktový soubor kvůli jeho ostatním metadatům.
+Pokud se deployment názvy liší od názvů v inventáři, uprav je přímo v šabloně.
+`yaml-map` samo nevynucuje schéma release manifestu.
+
 ### release to-bundle
 
 Existující release manifest lze převést zpět na bundle, pokud se jeho zaznamenané source images mají stát vstupem dalšího publish workflow:

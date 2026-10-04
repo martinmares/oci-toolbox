@@ -155,7 +155,7 @@ func init() {
 	releaseToBundleCmd.Flags().StringVar(&toBundleOptions.name, "name", "", "name stored in the generated bundle (required)")
 	releaseToBundleCmd.Flags().StringVarP(&toBundleOptions.output, "output", "o", "-", "bundle YAML output path, or - for stdout")
 	releaseToBundleCmd.Flags().StringVar(&toBundleOptions.sourceMode, "source-mode", "digest", "source reference mode: digest (exact and immutable) or tag (reusable but mutable)")
-	releaseCmd.AddCommand(releaseReconstructCmd, releaseSelectorsCmd, releaseCompareCmd, releaseToBundleCmd, releaseConvertCmd)
+	releaseCmd.AddCommand(releaseReconstructCmd, releaseSelectorsCmd, releaseCompareCmd, releaseToBundleCmd)
 	rootCmd.AddCommand(releaseCmd)
 }
 

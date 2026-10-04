@@ -19,7 +19,7 @@
   - [tree](#tree)
   - [examples](#examples-command)
   - [bundle](#bundle)
-  - [release convert](#release-convert)
+  - [External release formats](#external-release-formats)
   - [release to-bundle](#release-to-bundle)
   - [release reconstruct](#release-reconstruct)
   - [release selectors and compare](#release-selectors-and-compare)
@@ -661,50 +661,33 @@ With `--progress`, a separate `preflight` progress bar is shown before image tra
 
 New images selected from the bundle currently support only single-platform `linux/amd64` manifests. Unselected and base-only images reused by immutable digest may also be multi-platform OCI indexes; they are retagged without selecting or modifying a child platform.
 
-### release convert
+### External release formats
 
-Read either the existing `release_id` / `images` manifest or a
-`release.tsm.datalite.cz/v1alpha1` `TsmProductRelease` and write the existing
-internal release format. New outputs have `apiVersion: oci-toolbox/v1` and
-`kind: ImageRelease`; `release_id`, `created_at` and `images` remain at the root.
-Legacy files without a header are still accepted. Unknown or incomplete headers
-are rejected. Conversion is offline: no registry or cluster access.
+All release commands accept the native `oci-toolbox/v1` `ImageRelease` schema
+(`release_id`, `created_at`, `images`) and legacy native files without a header.
+External product formats are not interpreted by oci-toolbox. The former
+`release convert` command and automatic product imports have been removed.
+
+Use the separate `yaml-map` utility with a Jinja-like template to prepare a
+native release. The template belongs to the integration, so adding a new input
+format does not require a change to oci-toolbox:
 
 ```bash
-oci-toolbox release convert product-manifest.yaml --output releases/product.yml
-oci-toolbox release convert product-manifest.yaml \
-  --release-id RE_2026.10.02.01 \
-  --selector frontend-datalite=tsm-ui/tsm-ui \
+yaml-map --input product-manifest.yaml \
+  --template /path/to/yaml-map/examples/product-release-to-images.yaml.j2 \
+  --arg release_id=RE_2026.10.02.01 \
   --output releases/RE_2026.10.02.01.yml
+
+oci-toolbox release selectors releases/RE_2026.10.02.01.yml --format plain
+oci-toolbox release to-bundle releases/RE_2026.10.02.01.yml \
+  --name product --output bundles/product.yml
 ```
 
-Without `--output`, YAML is written to stdout. Existing output files are refused.
-`--release-id` changes only the release identifier, not individual image tags.
-`--selector image-id=app[/container]` is repeatable; omitting the container
-creates an application-wide selector.
-
-Product inputs include **all** `spec.containers` and `spec.frontend.apps` images,
-regardless of `changedComponents`. Backend IDs and default deployment selectors
-use the container map key. Frontend IDs are `frontend-<app-key>` and their default
-selectors use the image repository basename (e.g. `tsm-ui`). Review these inferred
-selectors before building deployments, especially when multiple frontend variants
-exist. Duplicate selectors must be resolved explicitly using `--selector`.
-
-The product ID comes from `spec.version.product` (or `metadata.name` when absent);
-if both exist they must match. Image tags and digests, creation time and source
-image metadata are preserved. The product release tag becomes `bundle.revision`.
-Maven/source inventories, verification results and `originRelease` are not copied
-into the internal image manifest; retain the original product file for that history.
-Platform is left unspecified because the product manifest does not declare it.
-A common registry/project prefix is inferred only when all images share a registry.
-Otherwise `registry_base` is omitted and copying requires an explicit `--src-base`
-covering every image (or separate inputs for different registries).
-
-The same input detection is used by `release selectors`, `release compare`,
-`release verify`, `release to-bundle`, `bundle publish --base-release` and
-`copy --release-manifest`. Bundle definitions themselves still use their existing
-`images` format; use `release to-bundle` to prepare a product input for KRF's
-existing bundle flow. All generated manifests remain in the internal format.
+`yaml-map` performs the conversion offline; oci-toolbox then validates and
+processes the native output normally. Review deployment selectors and retain
+the original input for metadata not included in the image release.
+Adjust deployment identities directly in the template if they differ from the
+inventory names; yaml-map does not enforce a release schema.
 
 ### release to-bundle
 
