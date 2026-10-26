@@ -141,7 +141,7 @@ func init() {
 	copyCmd.Flags().BoolVar(&reduceChanges, "reduce-changes", false, "preserve base layers and reduce recipe changes into one delta layer")
 	copyCmd.Flags().StringVar(&batchFile, "batch-file", "", "YAML file with copy jobs to run sequentially")
 	copyCmd.Flags().StringVar(&releaseManifest, "release-manifest", "", "release manifest whose digest-locked images should be copied")
-	copyCmd.Flags().StringVar(&srcBase, "src-base", "", "source registry/repository base to replace; defaults to release manifest registry_base")
+	copyCmd.Flags().StringVar(&srcBase, "src-base", "", "source registry/repository base to replace; defaults to release manifest registry_base (v2: repository_prefix)")
 	copyCmd.Flags().StringVar(&destBase, "dest-base", "", "destination registry/repository base for release manifest copies")
 	copyCmd.Flags().StringVar(&legacySrcPrefix, "src-prefix", "", "renamed to --src-base")
 	copyCmd.Flags().StringVar(&legacyDestPrefix, "dest-prefix", "", "renamed to --dest-base")
@@ -634,14 +634,12 @@ func loadReleaseCopyPlan(path, sourceBase, targetBase, requestedReleaseID string
 	if manifestReleaseID == "" {
 		return nil, fmt.Errorf("release manifest %q has no release_id", path)
 	}
-	if _, err := name.NewTag("example.invalid/repository:"+manifestReleaseID, name.WeakValidation); err != nil {
-		return nil, fmt.Errorf("release manifest %q has invalid release_id %q: %w", path, manifestReleaseID, err)
-	}
 	releaseID := strings.TrimSpace(requestedReleaseID)
 	if releaseID == "" {
 		releaseID = manifestReleaseID
-	} else if _, err := name.NewTag("example.invalid/repository:"+releaseID, name.WeakValidation); err != nil {
-		return nil, fmt.Errorf("invalid --release-id %q: %w", releaseID, err)
+	}
+	if _, err := name.NewTag("example.invalid/repository:"+releaseID, name.WeakValidation); err != nil {
+		return nil, fmt.Errorf("invalid destination release tag %q (set --release-id to a valid tag): %w", releaseID, err)
 	}
 	if len(manifest.Images) == 0 {
 		return nil, fmt.Errorf("release manifest %q has no images", path)
@@ -652,7 +650,7 @@ func loadReleaseCopyPlan(path, sourceBase, targetBase, requestedReleaseID string
 		sourceBase = normalizeCopyPrefix(manifest.RegistryBase)
 	}
 	if sourceBase == "" {
-		return nil, fmt.Errorf("--src-base is required when release manifest %q has no registry_base", path)
+		return nil, fmt.Errorf("--src-base is required when release manifest %q has no registry_base (v2: repository_prefix)", path)
 	}
 	targetBase = normalizeCopyPrefix(targetBase)
 	if targetBase == "" {
@@ -671,11 +669,11 @@ func loadReleaseCopyPlan(path, sourceBase, targetBase, requestedReleaseID string
 	for i, releaseImage := range manifest.Images {
 		repository := normalizeCopyPrefix(releaseImage.Image)
 		if repository == "" {
-			return nil, fmt.Errorf("release manifest %q images[%d].image is required", path, i)
+			return nil, fmt.Errorf("release manifest %q images[%d].repository is required", path, i)
 		}
 		if !strings.HasPrefix(repository, sourceBase+"/") {
 			return nil, fmt.Errorf(
-				"release manifest %q images[%d].image %q is outside source base %q",
+				"release manifest %q images[%d].repository %q is outside source base %q",
 				path,
 				i,
 				repository,
@@ -684,7 +682,7 @@ func loadReleaseCopyPlan(path, sourceBase, targetBase, requestedReleaseID string
 		}
 		relativeRepository := strings.TrimPrefix(repository, sourceBase+"/")
 		if relativeRepository == "" {
-			return nil, fmt.Errorf("release manifest %q images[%d].image has no repository below source base", path, i)
+			return nil, fmt.Errorf("release manifest %q images[%d].repository has no repository below source base", path, i)
 		}
 
 		digest := strings.TrimSpace(releaseImage.Digest)

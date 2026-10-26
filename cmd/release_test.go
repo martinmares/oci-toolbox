@@ -218,7 +218,7 @@ func TestWriteReleaseManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "release_id: release-1") {
+	if !strings.HasPrefix(string(data), "apiVersion: oci-toolbox/v1\n") || !strings.Contains(string(data), "release_id: release-1") {
 		t.Fatalf("manifest = %s", data)
 	}
 	if runtime.GOOS != "windows" {

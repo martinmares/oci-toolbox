@@ -2,8 +2,14 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/martinmares/oci-toolbox/internal/bundle"
+	"github.com/martinmares/oci-toolbox/internal/registryconfig"
+	"github.com/spf13/cobra"
 )
 
 func TestWriteExamplesPlain(t *testing.T) {
@@ -112,5 +118,66 @@ func TestExamplesCatalogHasUniqueCommandsAndCompleteEntries(t *testing.T) {
 				t.Fatalf("incomplete example in %q: %#v", command.Command, example)
 			}
 		}
+	}
+}
+
+func TestExamplesCoverReleaseAndBundleCommands(t *testing.T) {
+	seen := make(map[string]bool)
+	var rendered strings.Builder
+	for _, entry := range examplesCatalog {
+		seen[entry.Command] = true
+		for _, example := range entry.Examples {
+			rendered.WriteString(example.Shell)
+		}
+	}
+	for _, parent := range []*cobra.Command{releaseCmd, bundleCmd} {
+		for _, child := range parent.Commands() {
+			if child.Hidden || !child.IsAvailableCommand() {
+				continue
+			}
+			name := parent.Name() + " " + child.Name()
+			if !seen[name] {
+				t.Errorf("missing examples for %s", name)
+			}
+		}
+	}
+	if !strings.Contains(rendered.String(), "--digest-plan") {
+		t.Fatal("missing digest-plan example")
+	}
+}
+
+func TestNewExampleFilesAreValid(t *testing.T) {
+	t.Setenv("REGISTRY_USERNAME", "test-user")
+	t.Setenv("REGISTRY_PASSWORD", "test-password")
+	t.Setenv("GITLAB_API_TOKEN", "test-api-token")
+	seen := map[string]bool{}
+	for _, entry := range examplesCatalog {
+		for _, example := range entry.Examples {
+			for _, file := range example.Files {
+				switch file.Name {
+				case "native-v1.yml":
+					if _, err := bundle.DecodeRelease(strings.NewReader(file.Content)); err != nil {
+						t.Fatal(err)
+					}
+					seen[file.Name] = true
+				case "gitlab-cleanup.yml":
+					path := filepath.Join(t.TempDir(), file.Name)
+					if err := os.WriteFile(path, []byte(file.Content), 0600); err != nil {
+						t.Fatal(err)
+					}
+					cfg, err := registryconfig.Load(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if cfg.Cleanup.DeleteVia != "gitlab" || cfg.GitLab.Token != "test-api-token" {
+						t.Fatal("invalid GitLab example")
+					}
+					seen[file.Name] = true
+				}
+			}
+		}
+	}
+	if !seen["native-v1.yml"] || !seen["gitlab-cleanup.yml"] {
+		t.Fatal("missing native conversion/GitLab config example")
 	}
 }

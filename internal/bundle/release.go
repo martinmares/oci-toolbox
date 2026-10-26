@@ -12,7 +12,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const ReleaseAPIVersion = "oci-toolbox/v1"
+// ReleaseAPIVersion is the opt-in v2 schema; EncodeRelease still writes v1.
+const ReleaseAPIVersion = "oci-toolbox/v2"
+const LegacyReleaseAPIVersion = "oci-toolbox/v1"
 const ReleaseKind = "ImageRelease"
 
 type ReleaseManifest struct {
@@ -21,7 +23,7 @@ type ReleaseManifest struct {
 	ReleaseID    string         `yaml:"release_id"`
 	CreatedAt    time.Time      `yaml:"created_at"`
 	Bundle       *ReleaseBundle `yaml:"bundle,omitempty"`
-	RegistryBase string         `yaml:"registry_base,omitempty"`
+	RegistryBase string         `yaml:"repository_prefix,omitempty"`
 	Platform     string         `yaml:"platform,omitempty"`
 	Images       []ReleaseImage `yaml:"images"`
 	ExtraTags    []string       `yaml:"extra_tags,omitempty"`
@@ -37,7 +39,7 @@ type ReleaseImage struct {
 	AppName       string         `yaml:"app_name"`
 	ContainerName string         `yaml:"container_name,omitempty"`
 	Source        *ReleaseSource `yaml:"source,omitempty"`
-	Image         string         `yaml:"image"`
+	Image         string         `yaml:"repository"`
 	Tag           string         `yaml:"tag,omitempty"`
 	Digest        string         `yaml:"digest"`
 	ExtraTags     []string       `yaml:"extra_tags,omitempty"`
@@ -45,7 +47,7 @@ type ReleaseImage struct {
 }
 
 type ReleaseSource struct {
-	Image  string `yaml:"image" json:"image"`
+	Image  string `yaml:"repository" json:"image"`
 	Tag    string `yaml:"tag,omitempty" json:"tag,omitempty"`
 	Digest string `yaml:"digest" json:"digest"`
 }
@@ -86,14 +88,11 @@ func DecodeRelease(r io.Reader) (*ReleaseManifest, error) {
 }
 
 func (m *ReleaseManifest) Validate() error {
-	if (m.APIVersion != "" || m.Kind != "") && (m.APIVersion != ReleaseAPIVersion || m.Kind != ReleaseKind) {
+	if (m.APIVersion != "" || m.Kind != "") && ((m.APIVersion != ReleaseAPIVersion && m.APIVersion != LegacyReleaseAPIVersion) || m.Kind != ReleaseKind) {
 		return fmt.Errorf("unsupported release format %q / %q", m.APIVersion, m.Kind)
 	}
 	if err := requiredText("release_id", m.ReleaseID); err != nil {
 		return err
-	}
-	if _, err := name.NewTag("example.invalid/repository:"+strings.TrimSpace(m.ReleaseID), name.WeakValidation); err != nil {
-		return fmt.Errorf("release_id %q is invalid: %w", m.ReleaseID, err)
 	}
 	if len(m.Images) == 0 {
 		return errors.New("images must contain at least one item")
@@ -107,7 +106,7 @@ func (m *ReleaseManifest) Validate() error {
 			{name: prefix + ".id", value: item.ID},
 			{name: prefix + ".app_name", value: item.AppName},
 			{name: prefix + ".container_name", value: item.ContainerName},
-			{name: prefix + ".image", value: item.Image},
+			{name: prefix + ".repository", value: item.Image},
 			{name: prefix + ".tag", value: item.Tag},
 			{name: prefix + ".digest", value: item.Digest},
 		} {
@@ -117,7 +116,7 @@ func (m *ReleaseManifest) Validate() error {
 		}
 		for _, field := range []textField{
 			{name: prefix + ".app_name", value: item.AppName},
-			{name: prefix + ".image", value: item.Image},
+			{name: prefix + ".repository", value: item.Image},
 			{name: prefix + ".digest", value: item.Digest},
 		} {
 			if strings.TrimSpace(field.value) == "" {
@@ -182,13 +181,41 @@ func DecodeReconstruct(r io.Reader) (*ReconstructFile, error) {
 	return &input, nil
 }
 
+// EncodeRelease preserves the v1 output contract for existing consumers.
 func EncodeRelease(w io.Writer, manifest *ReleaseManifest) error {
+	return encodeRelease(w, manifest, LegacyReleaseAPIVersion)
+}
+
+// EncodeReleaseV2 explicitly opts into the new native schema.
+func EncodeReleaseV2(w io.Writer, manifest *ReleaseManifest) error {
+	return encodeRelease(w, manifest, ReleaseAPIVersion)
+}
+
+func encodeRelease(w io.Writer, manifest *ReleaseManifest, version string) error {
 	enc := yaml.NewEncoder(w)
 	enc.SetIndent(2)
 	defer enc.Close()
 	// Stamp the output without changing the caller's legacy input model.
 	output := *manifest
-	output.APIVersion = ReleaseAPIVersion
+	output.APIVersion = version
 	output.Kind = ReleaseKind
-	return enc.Encode(&output)
+	if version == ReleaseAPIVersion && output.Platform == "multi-platform" {
+		output.Platform = ""
+	}
+	output.Images = append([]ReleaseImage(nil), manifest.Images...)
+	for i := range output.Images {
+		if version == ReleaseAPIVersion && output.Images[i].Platform == "multi-platform" {
+			output.Images[i].Platform = ""
+		}
+	}
+	var doc yaml.Node
+	if err := doc.Encode(&output); err != nil {
+		return err
+	}
+	if version == LegacyReleaseAPIVersion {
+		if err := renameReleaseFields(&doc, false); err != nil {
+			return err
+		}
+	}
+	return enc.Encode(&doc)
 }

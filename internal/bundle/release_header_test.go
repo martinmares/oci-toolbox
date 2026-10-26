@@ -60,7 +60,7 @@ func TestNativeReleaseRejectsMalformedDocuments(t *testing.T) {
 
 func TestReleaseHeaderRejectsUnknownAndIncomplete(t *testing.T) {
 	for _, header := range []string{
-		"apiVersion: oci-toolbox/v2\nkind: ImageRelease\n",
+		"apiVersion: oci-toolbox/v99\nkind: ImageRelease\n",
 		"apiVersion: oci-toolbox/v1\nkind: Bundle\n",
 		"apiVersion: oci-toolbox/v1\n",
 		"kind: ImageRelease\n",

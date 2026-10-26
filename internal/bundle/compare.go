@@ -189,7 +189,7 @@ func changedReleaseFields(a, b ReleaseImage, mode ReleaseCompareMode) []string {
 	if mode == ReleaseCompareFull && !slices.Equal(normalizedReleaseStrings(a.ExtraTags), normalizedReleaseStrings(b.ExtraTags)) {
 		fields = append(fields, "extra_tags")
 	}
-	if mode != ReleaseCompareDigest && strings.TrimSpace(a.Platform) != strings.TrimSpace(b.Platform) {
+	if mode != ReleaseCompareDigest && normalizedReleasePlatform(a.Platform) != normalizedReleasePlatform(b.Platform) {
 		fields = append(fields, "platform")
 	}
 	return fields
@@ -234,4 +234,12 @@ func selectorParts(key string) (string, string) {
 		return key, ""
 	}
 	return parts[0], parts[1]
+}
+
+func normalizedReleasePlatform(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "multi-platform" {
+		return ""
+	}
+	return value
 }

@@ -364,7 +364,7 @@ images:
 `)
 
 	_, err := loadReleaseCopyPlan(path, "", "mirror.example.com/release", "invalid release id")
-	if err == nil || !strings.Contains(err.Error(), "invalid --release-id") {
+	if err == nil || !strings.Contains(err.Error(), "invalid destination release tag") {
 		t.Fatalf("error = %v, want invalid override error", err)
 	}
 }
@@ -462,4 +462,26 @@ func writeBatchFile(t *testing.T, data string) string {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	return path
+}
+
+func TestLoadReleaseCopyPlanValidatesOnlyDestinationReleaseID(t *testing.T) {
+	path := writeReleaseFile(t, `apiVersion: oci-toolbox/v2
+kind: ImageRelease
+release_id: customer/batch
+repository_prefix: registry.example.com/release
+images:
+  - app_name: api
+    repository: registry.example.com/release/api
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+`)
+	plan, err := loadReleaseCopyPlan(path, "", "mirror.example.com/archive", "release-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.Items[0].target(); got != "mirror.example.com/archive/api:release-2" {
+		t.Fatal(got)
+	}
+	if _, err := loadReleaseCopyPlan(path, "", "mirror.example.com/archive", ""); err == nil {
+		t.Fatal("accepted a logical ID as an invalid destination tag")
+	}
 }

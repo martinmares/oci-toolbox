@@ -64,6 +64,7 @@ type releaseToBundleOptions struct {
 var selectorsOptions releaseSelectorsOptions
 var compareOptions releaseCompareOptions
 var toBundleOptions releaseToBundleOptions
+var releaseConvertOutput string
 
 var releaseCmd = &cobra.Command{
 	Use:   "release",
@@ -131,6 +132,20 @@ var releaseToBundleCmd = &cobra.Command{
     --output bundles/tsm-sda-2.4-tags.yml`,
 }
 
+var releaseConvertCmd = &cobra.Command{
+	Use:   "convert RELEASE_MANIFEST",
+	Short: "Convert native ImageRelease v1/v2 to opt-in v2 (offline; not a product importer)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		manifest, err := bundle.LoadRelease(args[0])
+		if err != nil {
+			return err
+		}
+		return writeEncodedReleaseManifest(cmd, releaseConvertOutput, manifest, bundle.EncodeReleaseV2)
+	},
+	Example: "  oci-toolbox release convert releases/old.yml --output releases/converted.yml",
+}
+
 func init() {
 	releaseReconstructCmd.Flags().StringVarP(&reconstructOptions.file, "file", "f", "", "strict YAML file containing image references and deployment selectors")
 	releaseReconstructCmd.Flags().StringVarP(&reconstructOptions.output, "output", "o", "", "release manifest output path")
@@ -155,7 +170,8 @@ func init() {
 	releaseToBundleCmd.Flags().StringVar(&toBundleOptions.name, "name", "", "name stored in the generated bundle (required)")
 	releaseToBundleCmd.Flags().StringVarP(&toBundleOptions.output, "output", "o", "-", "bundle YAML output path, or - for stdout")
 	releaseToBundleCmd.Flags().StringVar(&toBundleOptions.sourceMode, "source-mode", "digest", "source reference mode: digest (exact and immutable) or tag (reusable but mutable)")
-	releaseCmd.AddCommand(releaseReconstructCmd, releaseSelectorsCmd, releaseCompareCmd, releaseToBundleCmd)
+	releaseConvertCmd.Flags().StringVarP(&releaseConvertOutput, "output", "o", "-", "v2 release manifest output path, or - for stdout; existing files are never overwritten")
+	releaseCmd.AddCommand(releaseReconstructCmd, releaseSelectorsCmd, releaseCompareCmd, releaseToBundleCmd, releaseConvertCmd)
 	rootCmd.AddCommand(releaseCmd)
 }
 

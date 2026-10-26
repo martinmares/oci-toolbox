@@ -254,6 +254,16 @@ images:
 		Examples:    []commandExample{{Title: "Plan a release", Shell: "oci-toolbox bundle plan bundle.yml --release-id RE_2026.07.28.01"}},
 	},
 	{
+		Command:     "bundle inspect",
+		Description: "Review manifest digests from the registry without downloading layers or writing images.",
+		Examples: []commandExample{{
+			Title:       "Publish exactly the reviewed digests",
+			Description: "Use the same release and selective options for inspection and publishing; retain the JSON as a trusted local artifact.",
+			Shell: `oci-toolbox bundle inspect bundle.yml --release-id release-1 > review.json
+oci-toolbox bundle publish bundle.yml --release-id release-1 --digest-plan review.json --output releases/release-1.yml`,
+		}},
+	},
+	{
 		Command:     "bundle publish",
 		Description: "Publish all or selected bundle images and write a digest-locked release manifest.",
 		Examples: []commandExample{
@@ -330,6 +340,24 @@ images:
   --output releases/RE_2026.07.28.01.yml`,
 			},
 		},
+	},
+	{
+		Command:     "release convert",
+		Description: "Explicit offline native ImageRelease v1/v2 to v2 conversion; ordinary release output stays v1.",
+		Examples: []commandExample{{
+			Title:       "Convert a native v1 file and compare content",
+			Description: "Preserves the source and refuses an existing output; external products still use yaml-map.",
+			Files: []exampleFile{{Name: "native-v1.yml", Format: "YAML", Content: `apiVersion: oci-toolbox/v1
+kind: ImageRelease
+release_id: release-1
+images:
+  - app_name: api
+    image: registry.example.com/team/api
+    platform: multi-platform
+    digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`}},
+			Shell: `oci-toolbox release convert native-v1.yml --output native-v2.yml
+oci-toolbox release compare native-v1.yml native-v2.yml --mode full --fail-on-change`,
+		}},
 	},
 	{
 		Command:     "release to-bundle",
@@ -433,6 +461,26 @@ repositories:
 		Examples: []commandExample{
 			{Title: "Preview cleanup", Description: "Cleanup is a dry-run unless --apply is supplied.", Shell: "oci-toolbox registry cleanup --config oci-toolbox-registry.yml"},
 			{Title: "Apply cleanup", Shell: "oci-toolbox registry cleanup --config oci-toolbox-registry.yml --apply"},
+			{
+				Title:       "Preview GitLab API tag cleanup",
+				Description: "Registry reads use registry credentials; GitLab deletes use a separate API token from the environment. Add --apply only after reviewing the plan.",
+				Files: []exampleFile{{Name: "gitlab-cleanup.yml", Format: "YAML", Content: `registry:
+  url: https://gitlab.example.com:5050
+  username: ${REGISTRY_USERNAME}
+  password: ${REGISTRY_PASSWORD}
+gitlab:
+  url: https://gitlab.example.com
+  project: "1582"
+  token: ${GITLAB_API_TOKEN}
+cleanup:
+  delete_via: gitlab
+  mode: timestamp
+  keep_count: 14
+  protect_latest: true
+repositories:
+  - name: team/project/api`}},
+				Shell: "oci-toolbox registry cleanup --config gitlab-cleanup.yml",
+			},
 		},
 	},
 	{

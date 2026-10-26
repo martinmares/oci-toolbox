@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -529,8 +530,12 @@ func registryBase(registry, project string) string {
 }
 
 func writeReleaseManifest(cmd *cobra.Command, output string, manifest *bundle.ReleaseManifest) error {
+	return writeEncodedReleaseManifest(cmd, output, manifest, bundle.EncodeRelease)
+}
+
+func writeEncodedReleaseManifest(cmd *cobra.Command, output string, manifest *bundle.ReleaseManifest, encode func(io.Writer, *bundle.ReleaseManifest) error) error {
 	if output == "-" {
-		return bundle.EncodeRelease(cmd.OutOrStdout(), manifest)
+		return encode(cmd.OutOrStdout(), manifest)
 	}
 	if err := ensureReleaseOutputAvailable(output); err != nil {
 		return err
@@ -549,7 +554,7 @@ func writeReleaseManifest(cmd *cobra.Command, output string, manifest *bundle.Re
 		tmp.Close()
 		return err
 	}
-	if err := bundle.EncodeRelease(tmp, manifest); err != nil {
+	if err := encode(tmp, manifest); err != nil {
 		tmp.Close()
 		return err
 	}

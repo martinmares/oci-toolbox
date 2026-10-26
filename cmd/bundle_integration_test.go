@@ -17,7 +17,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/martinmares/oci-toolbox/internal/bundle"
 	"github.com/martinmares/oci-toolbox/internal/progress"
@@ -492,15 +491,11 @@ func assertPublishedRelease(t *testing.T, path, digest string) {
 
 func readReleaseManifest(t *testing.T, path string) bundle.ReleaseManifest {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	manifest, err := bundle.LoadRelease(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var manifest bundle.ReleaseManifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	return manifest
+	return *manifest
 }
 
 func saveBundleCommandState() func() {

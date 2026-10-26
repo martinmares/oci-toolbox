@@ -1,5 +1,11 @@
 # oci-toolbox
 
+Běžné příkazy nadále zapisují `ImageRelease v1` (`image`, `source.image`,
+`registry_base`). Čtení podporuje v1, v2 a původní soubory bez hlavičky.
+V2 je volitelný formát: pouze explicitní offline `release convert` vytváří v2.
+Dokončení návrhu KRF není podmínkou používání nástroje ani důvodem k migraci.
+Podrobnosti: [ImageRelease v2 a kompatibilita](docs/IMAGE_RELEASE_V2.md).
+
 **Nástroj pro přenos a úpravu OCI image — bez Docker daemona.**
 
 `oci-toolbox` kopíruje container image mezi registry (podobně jako `skopeo`) a navíc při přenosu aplikuje deklarativní *recipe*, které image upravují — přidávají soubory, přepisují metadata, mění base image a podobně. Vše běží jako jediná statická binárka bez jakýchkoli runtime závislostí.
@@ -166,7 +172,7 @@ U čisté kopie registry→registry bez recipe, redukce vrstev, entrypoint wrapp
 | `--debug` | Zapne podrobný výstup |
 | `--batch-file cesta/k/images.yml` | Spustí více copy jobů ze YAML souboru |
 | `--release-manifest cesta/k/release.yml` | Zkopíruje všechny image uzamčené digestem z release manifestu |
-| `--src-base registry/cesta` | Zdrojový registry/repository základ nahrazený v release-manifest režimu; výchozí je `registry_base` |
+| `--src-base registry/cesta` | Zdrojový registry/repository základ nahrazený v release-manifest režimu; výchozí je `registry_base` (v2: `repository_prefix`) |
 | `--dest-base registry/cesta` | Povinný cílový registry/repository základ v release-manifest režimu |
 | `--output cesta/k/release.yml` | Zapíše release manifest pro zkopírované cílové image |
 | `--release-id ID` | Release ID pro výstup z `--batch-file`, nebo přepsání cílových tagů a výstupu v režimu `--release-manifest` |
@@ -540,6 +546,24 @@ oci-toolbox help examples
 
 Pokud výstup míří do terminálu, hlavičky příkazů, názvy variant, shell bloky a bloky externích souborů používají odlišné barvy. Při pipe nebo přesměrování se stejná hierarchie zachová v čistém textu, takže funguje i `oci-toolbox examples | less` a `oci-toolbox examples > examples.txt`.
 
+### Kontrola digestů před publikováním
+
+`bundle plan` je offline náhled referencí. `bundle inspect` čte manifesty z registry
+bez stahování vrstev a bez zápisů a vytvoří JSON s digesty a source/target vazbami:
+
+```bash
+oci-toolbox bundle inspect bundles/stable.yml --release-id release-1 > /tmp/review.json
+oci-toolbox bundle publish bundles/stable.yml --release-id release-1 \
+  --digest-plan /tmp/review.json --output releases/release-1.yml
+```
+
+Publish ověří shodu release ID a všech source/target referencí ještě před zápisy,
+pak použije zkontrolované digesty. Posunutí source tagu tím obsah nezmění.
+Pro selective publish předej oběma příkazům stejné `--base-release`, `--select`
+a `--preserve-base-only`. Inspect podporuje source/destination credentials,
+TLS a proxy volby. JSON uchovej jako důvěryhodný lokální artefakt; změna bundle
+referencí vyžaduje novou kontrolu. Publikování bez `--digest-plan` zůstává dostupné.
+
 ### bundle
 
 Bundle je měnitelná deklarace spravovaná v Gitu. Určuje, které tagy nebo digesty image se mají publikovat jako jeden release. Neobsahuje credentials a používá striktní YAML: neznámé položky, duplicitní ID, duplicitní deployment selektory a duplicitní cílové repository jsou odmítnuty.
@@ -638,9 +662,10 @@ Nové images vybrané z bundle zatím podporují pouze samostatné `linux/amd64`
 
 ### Externí release formáty
 
-Release příkazy přijímají vlastní formát `oci-toolbox/v1` / `ImageRelease`
-a původní neversionované soubory s `release_id` a `images`. Automatický import
-produktových manifestů a příkaz `release convert` byly odstraněny.
+Release příkazy přijímají nativní `ImageRelease` v1, v2 i původní soubory
+bez hlavičky. Automatický import cizích produktových formátů zůstává mimo
+oci-toolbox. Dnešní `release convert` převádí pouze naše nativní formáty;
+nenahrazuje původní produktový importer ani `yaml-map`.
 
 Cizí YAML nejprve převeď samostatnou utilitou `yaml-map`. Konkrétní pravidla
 patří do Jinja-like šablony spravované společně s integrací:
@@ -659,6 +684,20 @@ a zpracuje obvyklým způsobem. Před publikováním ověř deployment selectory
 a ponech si původní produktový soubor kvůli jeho ostatním metadatům.
 Pokud se deployment názvy liší od názvů v inventáři, uprav je přímo v šabloně.
 `yaml-map` samo nevynucuje schéma release manifestu.
+
+### release convert — volitelný převod do v2
+
+```bash
+oci-toolbox release convert releases/old.yml --output releases/v2.yml
+oci-toolbox release compare releases/old.yml releases/v2.yml --mode full --fail-on-change
+```
+
+Převod funguje offline, nemění zdroj a odmítne existující výstup. Zachová digesty,
+selectory a metadata; přejmenuje pole a ve v2 vynechá sentinel `multi-platform`.
+Porovnání považuje tento sentinel a neuvedenou platformu za ekvivalentní.
+Běžné copy/publish/reconstruct nadále zapisují v1 i při vstupu v2. Starší binárky
+v2 nepřečtou; používej jej pouze s konzumenty, kteří ho podporují. Není třeba
+migrovat existující soubory ani zavádět KRF. V2 je náš formát, nikoli OCI standard.
 
 ### release to-bundle
 
@@ -915,6 +954,24 @@ a odlišuje dokončená odstranění tagů a skupin digestů od plánu. Pokud n�
 nelze načíst, repository se přeskočí místo sestavení neúplného retenčního plánu.
 Velikosti jsou odhady, nikoli změřené uvolněné místo. Samotné smazání tagů
 neodstraňuje manifest ani jeho bloby; ty uvolňuje garbage collection registry.
+
+### delete-tag a delete-manifest
+
+```bash
+# Náhled odstranění jednoho konkrétního tagu.
+oci-toolbox delete-tag registry.example.com/team/app:bad-release
+oci-toolbox delete-tag registry.example.com/team/app:bad-release \
+  --expect-digest sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --apply
+
+# Náhled odstranění celého manifestu včetně všech jeho tagů v repository.
+oci-toolbox delete-manifest registry.example.com/team/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+Bez `--apply` se nic nemaže. `delete-tag` nikdy nepřechází na mazání celého
+digestu; nepodporovaný backend skončí chybou. Artifactory storage API lze zvolit
+přes `--artifactory-url` a `--artifactory-path REPO_KEY/IMAGE_PATH`.
+`delete-manifest --apply` odstraní manifest a všechny jeho tagové aliasy;
+sdílené vrstvy nemaže a uvolnění úložiště řídí garbage collection registry.
 
 ### Snapshot Kubernetes images
 

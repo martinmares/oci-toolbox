@@ -1,5 +1,11 @@
 # oci-toolbox
 
+Ordinary commands continue to write `ImageRelease v1` (`image`, `source.image`,
+`registry_base`). Readers accept v1, v2 and historical unversioned native files.
+V2 is opt-in: only explicit offline `release convert` produces v2.
+Using this tool does not require a completed KRF design or a manifest migration.
+See [ImageRelease v2 and compatibility](docs/IMAGE_RELEASE_V2.md).
+
 **OCI image transfer and in-flight patching tool — no Docker daemon required.**
 
 `oci-toolbox` copies container images between registries (like `skopeo`) and additionally applies declarative *recipes* that modify the image during transfer — injecting files, rewriting metadata, rebasing onto a different base image, and more. Everything runs as a single static binary with zero runtime dependencies.
@@ -168,7 +174,7 @@ For a plain registry-to-registry copy without recipes, layer reduction, entrypoi
 | `--debug` | Enable verbose output |
 | `--batch-file path/to/images.yml` | Run multiple copy jobs from a YAML file |
 | `--release-manifest path/to/release.yml` | Copy all digest-locked images from a release manifest |
-| `--src-base registry/path` | Source registry/repository base replaced in release-manifest mode; defaults to `registry_base` |
+| `--src-base registry/path` | Source registry/repository base replaced in release-manifest mode; defaults to `registry_base` (v2: `repository_prefix`) |
 | `--dest-base registry/path` | Required destination registry/repository base in release-manifest mode |
 | `--output path/to/release.yml` | Write a release manifest for copied destination images |
 | `--release-id ID` | Release ID for `--batch-file` output, or an override for destination tags and output in `--release-manifest` mode |
@@ -663,10 +669,10 @@ New images selected from the bundle currently support only single-platform `linu
 
 ### External release formats
 
-All release commands accept the native `oci-toolbox/v1` `ImageRelease` schema
-(`release_id`, `created_at`, `images`) and legacy native files without a header.
-External product formats are not interpreted by oci-toolbox. The former
-`release convert` command and automatic product imports have been removed.
+Release commands accept native ImageRelease v1, v2 and historical files
+without a header. External product formats are not interpreted by oci-toolbox.
+The current `release convert` only converts our native formats; it does not
+restore the former product importer or replace `yaml-map`.
 
 Use the separate `yaml-map` utility with a Jinja-like template to prepare a
 native release. The template belongs to the integration, so adding a new input
@@ -688,6 +694,21 @@ processes the native output normally. Review deployment selectors and retain
 the original input for metadata not included in the image release.
 Adjust deployment identities directly in the template if they differ from the
 inventory names; yaml-map does not enforce a release schema.
+
+### release convert — opt-in v2 conversion
+
+```bash
+oci-toolbox release convert releases/old.yml --output releases/v2.yml
+oci-toolbox release compare releases/old.yml releases/v2.yml --mode full --fail-on-change
+```
+
+Conversion is offline, preserves the source and rejects an existing output. It
+preserves digests, selectors and metadata, renames fields and omits the legacy
+`multi-platform` sentinel in v2. Comparison treats that sentinel and an omitted
+platform as equivalent. Ordinary copy/publish/reconstruct commands still write
+v1, including when reading v2. Older binaries cannot read v2; use it only with
+compatible consumers. Existing files do not need migration and KRF is not
+required. V2 is our own format, not an OCI standard.
 
 ### release to-bundle
 
