@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -42,6 +43,8 @@ type cleanupSummary struct {
 	KeptManifests       int
 	RemoveManifests     int
 	RemoveTags          int
+	RemovedManifests    int
+	RemovedTags         int
 	TotalBytes          int64
 	ReferencedBytes     int64
 	ReclaimableBytes    int64
@@ -121,7 +124,7 @@ func newCleanupCommand(opts *rootOptions) *cobra.Command {
 			return runCleanup(cmd.Context(), *opts)
 		},
 	}
-	cmd.Flags().BoolVar(&opts.apply, "apply", false, "delete selected manifests; default is dry-run")
+	cmd.Flags().BoolVar(&opts.apply, "apply", false, "delete selected manifests or GitLab tags, as configured; default is dry-run")
 	cmd.Flags().StringVar(&opts.repoFilter, "repo", "", "Optional comma-separated repository allowlist.")
 	cmd.Flags().BoolVar(&opts.ignoreMissing, "ignore-missing", false, "Skip missing repositories without per-repository error logs.")
 	return cmd
@@ -145,6 +148,20 @@ func runCleanup(ctx context.Context, opts rootOptions) error {
 	if len(cfg.Repositories) == 0 {
 		return fmt.Errorf("repositories must contain at least one repository")
 	}
+	var gitlab *registry.GitLabClient
+	switch cfg.Cleanup.DeleteVia {
+	case "", "registry":
+	case "gitlab":
+		gitlab, err = registry.NewGitLabClient(registry.Config{
+			BaseURL: cfg.GitLab.URL, Timeout: opts.timeout,
+			InsecureSkipVerify: cfg.Registry.TLS.Insecure, CACertPath: cfg.Registry.TLS.CACert,
+		}, cfg.GitLab.Project, cfg.GitLab.Token)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("cleanup.delete_via must be registry or gitlab")
+	}
 
 	allowedRepos := parseRepoFilter(opts.repoFilter)
 	dryRun := !opts.apply
@@ -160,9 +177,9 @@ func runCleanup(ctx context.Context, opts rootOptions) error {
 		if len(allowedRepos) > 0 && !allowedRepos[repo.Name] {
 			continue
 		}
-		repoSummary, err := cleanupRepository(ctx, client, cfg, repo.Name, dryRun, protectPatterns, totalBlobs, preservedBlobs, removeBlobs)
+		repoSummary, err := cleanupRepository(ctx, client, cfg, repo.Name, dryRun, protectPatterns, totalBlobs, preservedBlobs, removeBlobs, gitlab)
+		summary.add(repoSummary)
 		if err != nil {
-			summary.Repositories++
 			if opts.ignoreMissing && registry.IsNameUnknown(err) {
 				summary.RepositoriesMissing++
 				continue
@@ -171,7 +188,6 @@ func runCleanup(ctx context.Context, opts rootOptions) error {
 			log.Printf("repo=%s error=%v", repo.Name, err)
 			continue
 		}
-		summary.add(repoSummary)
 	}
 
 	for _, size := range totalBlobs {
@@ -185,6 +201,12 @@ func runCleanup(ctx context.Context, opts rootOptions) error {
 	}
 	summary.RemainingBytes = summary.TotalBytes - summary.ReclaimableBytes
 	printSummary(summary, dryRun)
+	if gitlab != nil {
+		fmt.Println("deletion backend: GitLab API (tags); blob storage is reclaimed by registry garbage collection")
+	}
+	if summary.RepositoriesFailed > 0 {
+		return fmt.Errorf("cleanup failed for %d repositories", summary.RepositoriesFailed)
+	}
 
 	return nil
 }
@@ -494,7 +516,7 @@ func loadConfigAndClient(opts rootOptions) (registryconfig.Config, *registry.Cli
 	return cfg, client, nil
 }
 
-func cleanupRepository(ctx context.Context, client *registry.Client, cfg registryconfig.Config, repoName string, dryRun bool, protectPatterns []*regexp.Regexp, totalBlobs, preservedBlobs, removeBlobs map[string]int64) (cleanupSummary, error) {
+func cleanupRepository(ctx context.Context, client *registry.Client, cfg registryconfig.Config, repoName string, dryRun bool, protectPatterns []*regexp.Regexp, totalBlobs, preservedBlobs, removeBlobs map[string]int64, gitlab *registry.GitLabClient) (cleanupSummary, error) {
 	summary := cleanupSummary{Repositories: 1}
 	fmt.Printf("\n=== %s ===\n", repoName)
 
@@ -503,13 +525,20 @@ func cleanupRepository(ctx context.Context, client *registry.Client, cfg registr
 		return summary, fmt.Errorf("list tags: %w", err)
 	}
 	summary.TagsScanned = len(tags)
+	if gitlab != nil {
+		if _, err := gitlab.RepositoryID(ctx, repoName); err != nil {
+			return summary, fmt.Errorf("GitLab repository lookup: %w", err)
+		}
+	}
 
 	records := make([]cleanup.TagRecord, 0, len(tags))
 	for _, tag := range tags {
 		info, err := client.ManifestInfo(ctx, repoName, tag)
 		if err != nil {
-			log.Printf("repo=%s tag=%s resolve manifest failed: %v", repoName, tag, err)
-			continue
+			for _, record := range records {
+				addRecordBlobs(record, preservedBlobs)
+			}
+			return summary, fmt.Errorf("resolve tag %s (repository cleanup skipped): %w", tag, err)
 		}
 		record := cleanup.NewTagRecord(tag, info.Digest, cfg.Cleanup.TagPattern)
 		record.Blobs = blobRecords(info.Blobs)
@@ -523,6 +552,9 @@ func cleanupRepository(ctx context.Context, client *registry.Client, cfg registr
 	summary.ProtectedManifests = len(plan.Latest)
 	summary.KeptManifests = len(plan.Keep)
 	summary.RemoveManifests = len(plan.Remove)
+	for _, group := range plan.Remove {
+		summary.RemoveTags += len(group.Tags)
+	}
 	printDigestGroups("latest/protected", plan.Latest)
 	printInvalidTags("invalid/ignored", plan.Invalid)
 	printDigestGroups("keep images", plan.Keep)
@@ -534,20 +566,88 @@ func cleanupRepository(ctx context.Context, client *registry.Client, cfg registr
 	for _, tag := range plan.Invalid {
 		addRecordBlobs(tag, preservedBlobs)
 	}
-	for _, group := range plan.Remove {
-		summary.RemoveTags += len(group.Tags)
-		addGroupBlobs(group, removeBlobs)
+	var cleanupErr error
+	for i, group := range plan.Remove {
 		action := "dry-run"
 		if !dryRun {
 			action = "delete"
-			if err := client.DeleteManifest(ctx, repoName, group.Digest); err != nil {
-				return summary, fmt.Errorf("delete digest=%s tags=%s: %w", group.Digest, formatTagNames(group.Tags), err)
+			var deleteErr error
+			if gitlab == nil {
+				deleteErr = client.DeleteManifest(ctx, repoName, group.Digest)
+				if deleteErr == nil {
+					summary.RemovedTags += len(group.Tags)
+				}
+			} else {
+				for _, tag := range group.Tags {
+					current, err := client.ManifestInfo(ctx, repoName, tag.Name)
+					if err != nil {
+						deleteErr = fmt.Errorf("recheck tag %s: %w", tag.Name, err)
+						break
+					}
+					if current.Digest != group.Digest {
+						deleteErr = fmt.Errorf("tag %s changed since planning: expected %s, found %s", tag.Name, group.Digest, current.Digest)
+						break
+					}
+					deleteErr = gitlab.DeleteTag(ctx, repoName, tag.Name)
+					if deleteErr != nil {
+						break
+					}
+					summary.RemovedTags++
+					fmt.Printf("delete-tag %s:%s\n", repoName, tag.Name)
+				}
 			}
+			if deleteErr != nil {
+				// A failed or partially untagged group can still reference its blobs.
+				for _, remaining := range plan.Remove[i:] {
+					addGroupBlobs(remaining, preservedBlobs)
+				}
+				cleanupErr = fmt.Errorf("delete digest=%s tags=%s: %w", group.Digest, formatTagNames(group.Tags), deleteErr)
+				break
+			}
+			summary.RemovedManifests++
 		}
+		addGroupBlobs(group, removeBlobs)
 		fmt.Printf("%-8s %s <- %s\n", action, shortDigest(group.Digest), formatTagLabel(group.Tags))
 	}
 
-	return summary, nil
+	if gitlab != nil && !dryRun && len(plan.Remove) > 0 {
+		// GitLab may acknowledge a deletion while the registry still lists the tag.
+		// Count completed removals from registry state, not HTTP responses alone.
+		summary.RemovedTags, summary.RemovedManifests = 0, 0
+		tags, err := client.ListTags(ctx, repoName)
+		if err != nil {
+			for _, group := range plan.Remove {
+				addGroupBlobs(group, preservedBlobs)
+			}
+			return summary, errors.Join(cleanupErr, fmt.Errorf("verify removed tags: %w", err))
+		}
+		present := make(map[string]bool, len(tags))
+		for _, tag := range tags {
+			present[tag] = true
+		}
+		var remaining []string
+		for _, group := range plan.Remove {
+			complete := true
+			for _, tag := range group.Tags {
+				if present[tag.Name] {
+					remaining = append(remaining, tag.Name)
+					complete = false
+				} else {
+					summary.RemovedTags++
+				}
+			}
+			if complete {
+				summary.RemovedManifests++
+				addGroupBlobs(group, removeBlobs)
+			} else {
+				addGroupBlobs(group, preservedBlobs)
+			}
+		}
+		if len(remaining) > 0 {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("registry still lists %d planned removal tags: %s", len(remaining), strings.Join(remaining, ", ")))
+		}
+	}
+	return summary, cleanupErr
 }
 
 func printDigestGroups(title string, groups []cleanup.DigestGroup) {
@@ -732,6 +832,8 @@ func (s *cleanupSummary) add(other cleanupSummary) {
 	s.KeptManifests += other.KeptManifests
 	s.RemoveManifests += other.RemoveManifests
 	s.RemoveTags += other.RemoveTags
+	s.RemovedManifests += other.RemovedManifests
+	s.RemovedTags += other.RemovedTags
 }
 
 func printSummary(summary cleanupSummary, dryRun bool) {
@@ -740,6 +842,9 @@ func printSummary(summary cleanupSummary, dryRun bool) {
 	fmt.Printf("tags scanned: %d\n", summary.TagsScanned)
 	fmt.Printf("manifests: protected=%d keep=%d remove=%d\n", summary.ProtectedManifests, summary.KeptManifests, summary.RemoveManifests)
 	fmt.Printf("remove tags: %d\n", summary.RemoveTags)
+	if !dryRun {
+		fmt.Printf("completed removals: digest groups=%d tags=%d\n", summary.RemovedManifests, summary.RemovedTags)
+	}
 	fmt.Printf("current unique blobs size: %s\n", formatBytes(summary.TotalBytes))
 	fmt.Printf("remove blobs referenced: %s\n", formatBytes(summary.ReferencedBytes))
 	fmt.Printf("estimated space saved: %s\n", formatBytes(summary.ReclaimableBytes))

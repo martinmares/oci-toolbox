@@ -866,6 +866,56 @@ oci-toolbox registry cleanup --config oci-toolbox-registry.yml --apply
 
 Cleanup pracuje s unikátními manifest digesty, takže více tagů stejné image nepočítá jako samostatné image. `mode: timestamp` řadí tagy odpovídající `YYYY.MM.DD.BUILD`; `mode: created` používá čas z image konfigurace. Chráněný tag zachová celý příslušný manifest digest. Registry příkazy podporují také `--insecure`, `--ca-cert`, `--timeout`, filtrování repository a ignorování chybějících repository.
 
+#### Mazání tagů přes GitLab API
+
+Pokud GitLab povoluje mazání tagů přes své API, ale nepovoluje přímé mazání
+manifestů přes Registry API, zvol backend `gitlab`:
+
+```yaml
+registry:
+  url: https://gitlab.example.com:5050
+  username: ${REGISTRY_USERNAME}
+  password: ${REGISTRY_PASSWORD}
+
+gitlab:
+  url: https://gitlab.example.com
+  project: "1582" # Číselné ID projektu nebo plná cesta, například team/project.
+  token: ${GITLAB_API_TOKEN}
+
+cleanup:
+  delete_via: gitlab # Výchozí: registry (mazání manifestů podle digestu).
+  mode: timestamp
+  keep_count: 10
+  protect_latest: true
+  protect_tag_patterns:
+    - '^2026\.08\.10\.01$'
+
+repositories:
+  - name: team/project/api
+```
+
+Do `gitlab.token` patří vygenerovaná hodnota osobního tokenu se scope `api`.
+Název tokenu je pouze popisek. GitLab API dostává token v hlavičce `PRIVATE-TOKEN`
+bez uživatelského jména. Čtení registry nadále používá `registry.username/password`
+nebo `--creds`. GitLab API sdílí timeout a TLS konfiguraci registry.
+
+Příkaz `registry cleanup` stále pouze vypíše náhled, dokud nepřidáš `--apply`.
+Náhled ověřuje také přístup ke GitLab API a přiřazení repositories. Retence nadále
+seskupuje podle digestu: chráněný tag zachová celou skupinu. GitLab režim maže
+vybrané tagy jednotlivě a před odstraněním kontroluje aktuální digest přímo přes
+Registry API. GitLab načítání detailu tagu nepoužívá: může vracet 404 i pro tag,
+který registry stále vypisuje a který lze přes GitLab API smazat. Akceptuje
+HTTP 200 i 204, již chybějící tag umožňuje opakování příkazu. Po zpracování
+repository znovu načte seznam tagů z registry a započítá jen skutečně chybějící
+tagy. Zbývající tagy nebo selhání ověření hlásí jako chybu. Tag přesunutý na
+jiný digest nesmaže. HTTP přesměrování s API tokenem se neprovádí.
+
+Chyby repositories vracejí nenulový exit kód. Souhrn zachovává i částečný postup
+a odlišuje dokončená odstranění tagů a skupin digestů od plánu. Pokud některý tag
+nelze načíst, repository se přeskočí místo sestavení neúplného retenčního plánu.
+Velikosti jsou odhady, nikoli změřené uvolněné místo. Samotné smazání tagů
+neodstraňuje manifest ani jeho bloby; ty uvolňuje garbage collection registry.
+
 ### Snapshot Kubernetes images
 
 `snapshot create` načte reference container a init-container images ze všech Deploymentů v Kubernetes namespace a uloží komprimované OCI image-layout archivy spolu s průběžně zapisovaným YAML manifestem. OCI archivy zachovají jak single-platform images, tak kompletní multi-platform image indexy. Přenos probíhá přímo přes vestavěný copy engine; není potřeba Docker daemon ani druhý proces `oci-toolbox`.

@@ -12,8 +12,15 @@ import (
 
 type Config struct {
 	Registry     RegistryConfig `yaml:"registry"`
+	GitLab       GitLabConfig   `yaml:"gitlab,omitempty"`
 	Cleanup      CleanupConfig  `yaml:"cleanup"`
 	Repositories []Repository   `yaml:"repositories"`
+}
+
+type GitLabConfig struct {
+	URL     string `yaml:"url"`
+	Project string `yaml:"project"`
+	Token   string `yaml:"token"`
 }
 
 type RegistryConfig struct {
@@ -29,6 +36,7 @@ type TLSConfig struct {
 }
 
 type CleanupConfig struct {
+	DeleteVia          string   `yaml:"delete_via"`
 	Mode               string   `yaml:"mode"`
 	KeepCount          int      `yaml:"keep_count"`
 	TagPattern         string   `yaml:"tag_pattern"`

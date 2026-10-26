@@ -895,6 +895,58 @@ oci-toolbox registry cleanup --config oci-toolbox-registry.yml --apply
 
 Cleanup works with unique manifest digests rather than counting aliases as separate images. `mode: timestamp` orders tags matching `YYYY.MM.DD.BUILD`; `mode: created` uses image configuration timestamps. Protected tags preserve their complete manifest digest. Registry operations also support `--insecure`, `--ca-cert`, `--timeout`, repository filtering, and missing-repository handling.
 
+#### GitLab tag deletion
+
+For GitLab installations that allow tag deletion through the GitLab API but do
+not grant direct Registry API manifest deletion, select the GitLab backend:
+
+```yaml
+registry:
+  url: https://gitlab.example.com:5050
+  username: ${REGISTRY_USERNAME}
+  password: ${REGISTRY_PASSWORD}
+
+gitlab:
+  url: https://gitlab.example.com
+  project: "1582" # Numeric project ID or full path such as team/project.
+  token: ${GITLAB_API_TOKEN}
+
+cleanup:
+  delete_via: gitlab # Default: registry (delete manifests by digest).
+  mode: timestamp
+  keep_count: 10
+  protect_latest: true
+  protect_tag_patterns:
+    - '^2026\.08\.10\.01$'
+
+repositories:
+  - name: team/project/api
+```
+
+Use a personal access token with the `api` scope in `gitlab.token`. Its name is
+only a label; the API authenticates with the generated secret in `PRIVATE-TOKEN`,
+without a username. Registry reads still use `registry.username/password` or
+`--creds`. GitLab API requests share the registry timeout and TLS configuration.
+
+The existing `registry cleanup` command remains a dry-run unless `--apply` is
+specified. Dry-run also validates GitLab access and repository mapping. Retention
+still groups by digest: protecting one tag preserves the entire digest group.
+GitLab mode deletes each selected tag individually and checks its current digest
+through Registry API before deletion. It does not use GitLab tag-detail GET, which
+can return 404 even when the registry lists the tag and GitLab DELETE succeeds.
+Both HTTP 200 and 204 are accepted. After processing a repository,
+the registry tag list is read again: only absent tags count as completed removals;
+remaining tags or a failed verification return an error. Already absent tags are
+accepted for retries; a tag that moved to another digest is not deleted. Requests
+are not redirected with the API token.
+
+Repository failures return a nonzero exit code, retain partial progress in the
+summary, and report completed tag/digest-group removals separately from the plan.
+If any tag cannot be inspected, that repository is skipped rather than building
+an incomplete retention plan. Storage figures are estimates, not measured freed
+space; deleting tags does not itself remove the manifest or reclaim its blobs.
+Registry garbage collection is responsible for reclaiming unreferenced content.
+
 ### Targeted tag and manifest deletion
 
 `delete-tag` removes one explicit tag. `delete-manifest` removes an explicit
