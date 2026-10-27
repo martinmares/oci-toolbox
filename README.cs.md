@@ -658,7 +658,7 @@ Pokud převzatá base image zůstává ve stejné repository, publish vytvoří 
 
 S `--progress` se před samotným přenosem zobrazuje samostatný `preflight` progress bar. Ukazuje počet zkontrolovaných images, právě ověřovaný selector a zda se kontroluje source digest nebo cílový tag.
 
-Nové images vybrané z bundle zatím podporují pouze samostatné `linux/amd64` manifesty. Nevybrané a base-only images převzaté přes neměnný digest mohou být také multi-platform OCI indexy; dostanou nový tag bez výběru nebo změny konkrétní platformy.
+Nové images vybrané z bundle používají `linux/amd64`. U multi-platform OCI indexu nebo Docker manifest listu vyberou `bundle inspect` a `bundle publish` variantu `linux/amd64` nezávisle na architektuře počítače, kde běží. Digest této varianty se používá pro inspekční plán, kopírování, metadata zdroje i kontrolu cíle; chybějící platforma ukončí preflight před kopírováním. Nevybrané a base-only images převzaté přes neměnný digest mohou být také multi-platform OCI indexy; dostanou nový tag bez výběru nebo změny konkrétní platformy.
 
 ### Externí release formáty
 

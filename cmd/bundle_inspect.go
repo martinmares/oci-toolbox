@@ -52,7 +52,12 @@ var bundleInspectCmd = &cobra.Command{
 				opts = destination
 			}
 			opts = append(append([]remote.Option(nil), opts...), remote.WithContext(cmd.Context()))
-			descriptor, err := fetchManifestDescriptor(image.SourceRef, opts)
+			var descriptor *remote.Descriptor
+			if image.FromBaseRelease {
+				descriptor, err = fetchManifestDescriptor(image.SourceRef, opts)
+			} else {
+				descriptor, err = fetchBundleSourceManifest(image.SourceRef, opts)
+			}
 			if err != nil {
 				return fmt.Errorf("image %q: %w", image.ID, err)
 			}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/spf13/cobra"
@@ -383,10 +384,11 @@ func sameImageRepository(a, b string) bool {
 
 func fetchBundleImage(refValue string, allowIndex bool, opts []remote.Option) (*remote.Descriptor, string, error) {
 	if !allowIndex {
-		desc, err := fetchImageManifest(refValue, opts)
+		desc, err := fetchBundleSourceManifest(refValue, opts)
 		if err != nil {
 			return nil, "", err
 		}
+
 		platform, err := verifiedPlatform(desc)
 		return desc, platform, err
 	}
@@ -396,6 +398,32 @@ func fetchBundleImage(refValue string, allowIndex bool, opts []remote.Option) (*
 	}
 	platform, err := reconstructPlatform(desc)
 	return desc, platform, err
+}
+
+// fetchBundleSourceManifest selects linux/amd64 without reading config or layer
+// blobs, so bundle inspect and publish lock the same child manifest digest.
+func fetchBundleSourceManifest(refValue string, opts []remote.Option) (*remote.Descriptor, error) {
+	opts = append(append([]remote.Option(nil), opts...), remote.WithPlatform(v1.Platform{OS: "linux", Architecture: "amd64"}))
+	desc, err := fetchManifestDescriptor(refValue, opts)
+	if err != nil {
+		return nil, err
+	}
+	if !desc.MediaType.IsIndex() {
+		return desc, nil
+	}
+	image, err := desc.Image()
+	if err != nil {
+		return nil, fmt.Errorf("resolve linux/amd64 from index %s: %w", desc.Digest, err)
+	}
+	digest, err := image.Digest()
+	if err != nil {
+		return nil, err
+	}
+	ref, err := name.ParseReference(stripScheme(refValue))
+	if err != nil {
+		return nil, err
+	}
+	return fetchImageManifest(ref.Context().Digest(digest.String()).Name(), opts)
 }
 
 func fetchOptionalBundleImage(refValue string, allowIndex bool, opts []remote.Option) (*remote.Descriptor, bool, error) {

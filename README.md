@@ -665,7 +665,7 @@ When a reused base image stays in the same repository, publish creates the new r
 
 With `--progress`, a separate `preflight` progress bar is shown before image transfer. It reports the number of inspected images, the selector currently being checked, and whether the source digest or destination tag is being inspected.
 
-New images selected from the bundle currently support only single-platform `linux/amd64` manifests. Unselected and base-only images reused by immutable digest may also be multi-platform OCI indexes; they are retagged without selecting or modifying a child platform.
+New images selected from the bundle target `linux/amd64`. For a multi-platform OCI index or Docker manifest list, `bundle inspect` and `bundle publish` select the `linux/amd64` child manifest independently of the publishing host architecture. The child digest is used for inspection plans, copying, source metadata, and destination verification; images without a matching platform fail before copying. Unselected and base-only images reused by immutable digest may also be multi-platform OCI indexes; they are retagged without selecting or modifying a child platform.
 
 ### External release formats
 
